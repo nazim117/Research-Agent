@@ -523,7 +523,7 @@ function ChatPane({ projectId, onActionDrafted }) {
 
 // ─── Studio pane ───────────────────────────────────────────────────────────
 
-const STUDIO_TABS = ['📋 Briefing', '✎ Actions', '✓ Decisions', '⚠ Risks'];
+const STUDIO_TABS = ['📋 Briefing', '☀ Standup', '✎ Actions', '✓ Decisions', '⚠ Risks'];
 
 function StudioPane({ projectId, actionsKey, setToast }) {
   const [tab, setTab] = useState(() => {
@@ -532,6 +532,8 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   });
   const [briefing, setBriefing] = useState(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
+  const [standup, setStandup] = useState(null);
+  const [standupLoading, setStandupLoading] = useState(false);
   const [actions, setActions] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [risks, setRisks] = useState([]);
@@ -542,7 +544,7 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   }
 
   useEffect(() => {
-    if (!projectId) { setActions([]); setBriefing(null); return; }
+    if (!projectId) { setActions([]); setBriefing(null); setStandup(null); return; }
     api.listActions(projectId, 'pending').then(setActions).catch(() => setActions([]));
   }, [projectId, actionsKey]);
 
@@ -562,6 +564,19 @@ function StudioPane({ projectId, actionsKey, setToast }) {
       setToast({ message: `Briefing failed: ${err.message}` });
     } finally {
       setBriefingLoading(false);
+    }
+  }
+
+  async function loadStandup() {
+    if (!projectId || standupLoading) return;
+    setStandupLoading(true);
+    try {
+      const s = await api.getStandup(projectId);
+      setStandup(s);
+    } catch (err) {
+      setToast({ message: `Standup failed: ${err.message}` });
+    } finally {
+      setStandupLoading(false);
     }
   }
 
@@ -594,10 +609,14 @@ function StudioPane({ projectId, actionsKey, setToast }) {
           <button
             key={label}
             className={`studio-tab ${tab === i ? 'active' : ''}`}
-            onClick={() => { selectTab(i); if (i === 0 && !briefing) loadBriefing(); }}
+            onClick={() => {
+              selectTab(i);
+              if (i === 0 && !briefing) loadBriefing();
+              if (i === 1 && !standup) loadStandup();
+            }}
           >
             {label}
-            {i === 1 && actions.length > 0 && (
+            {i === 2 && actions.length > 0 && (
               <span className="section-badge" style={{ marginLeft: '4px' }}>{actions.length}</span>
             )}
           </button>
@@ -670,14 +689,76 @@ function StudioPane({ projectId, actionsKey, setToast }) {
 
         {tab === 1 && (
           <div>
+            {!standup && !standupLoading && (
+              <button className="btn btn-secondary btn-block" onClick={loadStandup}>
+                Generate Standup
+              </button>
+            )}
+            {standupLoading && <p className="no-data">Generating…</p>}
+            {standup && (
+              <div>
+                <div className="briefing-summary">{standup.summary}</div>
+
+                {standup.done.length > 0 && (
+                  <details className="briefing-section" open>
+                    <summary>Done ({standup.done.length})</summary>
+                    {standup.done.map((item, i) => (
+                      <div key={i} className="briefing-item">
+                        <span className="briefing-item-text">{item}</span>
+                      </div>
+                    ))}
+                  </details>
+                )}
+
+                {standup.today.length > 0 && (
+                  <details className="briefing-section" open>
+                    <summary>Today / Next ({standup.today.length})</summary>
+                    {standup.today.map((item, i) => (
+                      <div key={i} className="briefing-item">
+                        <span className="briefing-item-text">{item}</span>
+                      </div>
+                    ))}
+                  </details>
+                )}
+
+                {standup.blockers.length > 0 && (
+                  <details className="briefing-section" open>
+                    <summary>Blockers ({standup.blockers.length})</summary>
+                    {standup.blockers.map((item, i) => (
+                      <div key={i} className="briefing-item">
+                        <span className="briefing-item-text">{item}</span>
+                      </div>
+                    ))}
+                  </details>
+                )}
+
+                {standup.done.length === 0 && standup.today.length === 0 && standup.blockers.length === 0 && (
+                  <p className="no-data">Nothing logged in the last 24h.</p>
+                )}
+
+                <div className="briefing-meta">Generated: {new Date(standup.generated_at).toLocaleString()}</div>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  style={{ marginTop: '12px' }}
+                  onClick={() => { setStandup(null); loadStandup(); }}
+                >
+                  Refresh
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 2 && (
+          <div>
             {actions.length === 0 ? (
               <p className="no-actions">No pending actions.</p>
             ) : (
               actions.map(a => (
                 <div key={a.id} className="action-card">
                   <div className="action-type">{a.action_type}</div>
-                  <div className="action-meta">{a.payload?.item_id} · {a.payload?.ref_key}</div>
-                  <div className="action-body">{a.payload?.body}</div>
+                  <div className="action-meta">{a.payload?.item_id || a.payload?.project_key || ''} · {a.payload?.ref_key}</div>
+                  <div className="action-body">{a.payload?.body || a.payload?.summary || ''}{a.payload?.description ? ` — ${a.payload.description}` : ''}</div>
                   <div className="action-btns">
                     <button className="btn-approve" onClick={() => handleApprove(a.id)}>Approve</button>
                     <button className="btn-reject" onClick={() => handleReject(a.id)}>Reject</button>
@@ -688,7 +769,7 @@ function StudioPane({ projectId, actionsKey, setToast }) {
           </div>
         )}
 
-        {tab === 2 && (
+        {tab === 3 && (
           <div className="transcript-results">
             {decisions.length === 0 ? (
               <p className="no-data">No decisions extracted yet.</p>
@@ -703,7 +784,7 @@ function StudioPane({ projectId, actionsKey, setToast }) {
           </div>
         )}
 
-        {tab === 3 && (
+        {tab === 4 && (
           <div className="transcript-results">
             {risks.length === 0 ? (
               <p className="no-data">No risks extracted yet.</p>

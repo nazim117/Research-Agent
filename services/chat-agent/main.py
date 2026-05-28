@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 
 import httpx
 
-from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES
+from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, validate_payload
 from config import settings
 from embeddings import embed
 from mcp_client import MCPClient, MCPError
@@ -46,6 +46,7 @@ from transcript import (
 )
 from vectors import VectorStore
 import briefing
+import standup
 from extractors import extract_file, extract_url
 
 logger = logging.getLogger("uvicorn.error")
@@ -287,6 +288,14 @@ class BriefingOut(BaseModel):
     generated_at: str
 
 
+class StandupOut(BaseModel):
+    summary: str
+    done: list[str]
+    today: list[str]
+    blockers: list[str]
+    generated_at: str
+
+
 class SourceOut(BaseModel):
     source: str   # Label supplied at ingest time (e.g. "notes.md", "jira:KAN-1").
     chunks: int   # Number of Qdrant points stored under this source label.
@@ -514,12 +523,12 @@ async def propose_action(project_id: str, req: ProposeActionRequest) -> ActionOu
             detail=f"Unknown action_type {req.action_type!r}. "
             f"Allowed: {sorted(VALID_ACTION_TYPES)}",
         )
-    for field in ("item_id", "body", "ref_key"):
-        if not req.payload.get(field):
-            raise HTTPException(
-                status_code=400,
-                detail=f"payload must include non-empty '{field}'",
-            )
+    missing = validate_payload(req.action_type, req.payload)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"payload must include non-empty '{missing}'",
+        )
     action_id = await action_store.create_pending(
         project_id, req.action_type, req.payload
     )
@@ -814,6 +823,24 @@ async def get_briefing(project_id: str) -> BriefingOut:
     )
 
 
+@app.get("/projects/{project_id}/standup", response_model=StandupOut)
+async def get_standup(project_id: str) -> StandupOut:
+    """Daily Yesterday/Today/Blockers standup for the project, scoped to the last 24h."""
+    await _require_project(project_id)
+    s = await standup.assemble_standup(
+        project_id=project_id,
+        transcript_store=transcript_store,
+        chat_fn=chat,
+    )
+    return StandupOut(
+        summary=s.summary,
+        done=s.done,
+        today=s.today,
+        blockers=s.blockers,
+        generated_at=s.generated_at,
+    )
+
+
 @app.get("/projects/{project_id}/sources", response_model=list[SourceOut])
 async def list_sources(project_id: str) -> list[SourceOut]:
     """Return distinct ingested sources for a project with their chunk counts."""
@@ -1006,14 +1033,19 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
                     "TOOLS YOU CAN PROPOSE\n"
                     "You may propose at most one write action per reply by emitting "
                     "this exact pattern on its own line:\n"
-                    "<<DRAFT_ACTION>>"
-                    '{"action_type":"jira:add_comment",'
-                    '"payload":{"item_id":"ALPHA-12","body":"...","ref_key":"jira_project_key"}}'
-                    "<<END>>\n"
-                    "Use 'github:add_comment' and 'github_repo' for GitHub issues.\n"
-                    "Only propose when the user explicitly asks you to comment on a ticket. "
+                    "<<DRAFT_ACTION>>{...}<<END>>\n"
                     "The user will approve or reject in the Pending Actions panel before "
-                    "any write reaches the external system."
+                    "any write reaches the external system.\n\n"
+                    "Supported action_type values and their payload shapes:\n"
+                    '  jira:add_comment    — {"action_type":"jira:add_comment","payload":{"item_id":"PROJ-12","body":"...","ref_key":"jira_project_key"}}\n'
+                    '  jira:create_issue   — {"action_type":"jira:create_issue","payload":{"ref_key":"jira_project_key","summary":"...","issue_type":"Task","description":"..."}}\n'
+                    '  jira:update_issue   — {"action_type":"jira:update_issue","payload":{"item_id":"PROJ-12","ref_key":"jira_project_key","summary":"...","description":"..."}}\n'
+                    '  jira:close_issue    — {"action_type":"jira:close_issue","payload":{"item_id":"PROJ-12","ref_key":"jira_project_key","status":"Done"}}\n'
+                    '  github:add_comment  — {"action_type":"github:add_comment","payload":{"item_id":"42","body":"...","ref_key":"github_repo"}}\n\n'
+                    "Rules: propose only when the user explicitly asks for a Jira or GitHub write. "
+                    "issue_type and description are optional for create. "
+                    "status is optional for close (defaults to Done). "
+                    "For update, include at least summary or description."
                 ),
             }
         )
@@ -1051,9 +1083,7 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
             payload = draft.get("payload", {})
             if (
                 action_type in VALID_ACTION_TYPES
-                and payload.get("item_id")
-                and payload.get("body")
-                and payload.get("ref_key")
+                and validate_payload(action_type, payload) is None
             ):
                 action_id = await action_store.create_pending(
                     req.project_id, action_type, payload

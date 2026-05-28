@@ -55,6 +55,10 @@ export const listRisks = (projectId) =>
 export const getBriefing = (projectId) =>
   request('GET', `/projects/${projectId}/briefing`);
 
+// Standup: daily Yesterday/Today/Blockers view
+export const getStandup = (projectId) =>
+  request('GET', `/projects/${projectId}/standup`);
+
 export const listSources = (projectId) =>
   request('GET', `/projects/${projectId}/sources`);
 

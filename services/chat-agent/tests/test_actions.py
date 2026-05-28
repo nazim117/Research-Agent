@@ -8,7 +8,7 @@
 import pytest
 
 from sync import SyncStore
-from actions import ActionStore, execute_action
+from actions import ActionStore, execute_action, validate_payload, VALID_ACTION_TYPES
 from mcp_client import MCPError
 
 
@@ -300,3 +300,111 @@ async def test_execute_action_missing_ref_key_raises(stores):
 
 
 pytestmark = pytest.mark.asyncio
+
+
+# ---------------------------------------------------------------------------
+# validate_payload
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("action_type,payload,expected_missing", [
+    ("jira:add_comment",  {"item_id": "P-1", "body": "hi", "ref_key": "jira_project_key"}, None),
+    ("jira:add_comment",  {"item_id": "P-1", "ref_key": "jira_project_key"}, "body"),
+    ("jira:create_issue", {"ref_key": "jira_project_key", "summary": "task"}, None),
+    ("jira:create_issue", {"ref_key": "jira_project_key"}, "summary"),
+    ("jira:create_issue", {"summary": "task"}, "ref_key"),
+    ("jira:update_issue", {"item_id": "P-1", "ref_key": "jira_project_key"}, None),
+    ("jira:update_issue", {"ref_key": "jira_project_key"}, "item_id"),
+    ("jira:close_issue",  {"item_id": "P-1", "ref_key": "jira_project_key"}, None),
+    ("jira:close_issue",  {"ref_key": "jira_project_key"}, "item_id"),
+    ("github:add_comment",{"item_id": "42", "body": "x", "ref_key": "github_repo"}, None),
+    ("github:add_comment",{"item_id": "42", "ref_key": "github_repo"}, "body"),
+])
+def test_validate_payload(action_type, payload, expected_missing):
+    assert validate_payload(action_type, payload) == expected_missing
+
+
+def test_all_new_action_types_in_valid_set():
+    for t in ("jira:create_issue", "jira:update_issue", "jira:close_issue"):
+        assert t in VALID_ACTION_TYPES
+
+
+# ---------------------------------------------------------------------------
+# execute_action — new Jira CRUD types
+# ---------------------------------------------------------------------------
+
+async def test_execute_action_jira_create(stores):
+    """jira:create_issue calls jira_create_issue with project_key from external_refs."""
+    _, astore = stores
+    action_id = await astore.create_pending(
+        "proj-1", "jira:create_issue",
+        {"ref_key": "jira_project_key", "summary": "New task", "issue_type": "Bug"},
+    )
+    await astore.approve(action_id)
+    action = await astore.get(action_id)
+
+    mcp = _FakeMCPClient([{"key": "ALPHA-99", "url": "https://jira/ALPHA-99"}])
+    result = await execute_action(action, mcp=mcp, project_store=_FakeProjectStore())
+
+    assert result["id"] == "ALPHA-99"
+    name, args = mcp._calls[0]
+    assert name == "jira_create_issue"
+    assert args["project_key"] == "ALPHA"
+    assert args["summary"] == "New task"
+    assert args["issue_type"] == "Bug"
+
+
+async def test_execute_action_jira_update(stores):
+    """jira:update_issue calls jira_update_issue with key and optional fields."""
+    _, astore = stores
+    action_id = await astore.create_pending(
+        "proj-1", "jira:update_issue",
+        {"item_id": "ALPHA-5", "ref_key": "jira_project_key", "summary": "New title"},
+    )
+    await astore.approve(action_id)
+    action = await astore.get(action_id)
+
+    mcp = _FakeMCPClient([{"key": "ALPHA-5", "url": "https://jira/ALPHA-5", "updated": True}])
+    result = await execute_action(action, mcp=mcp, project_store=_FakeProjectStore())
+
+    assert result["id"] == "ALPHA-5"
+    name, args = mcp._calls[0]
+    assert name == "jira_update_issue"
+    assert args["key"] == "ALPHA-5"
+    assert args["summary"] == "New title"
+
+
+async def test_execute_action_jira_close(stores):
+    """jira:close_issue calls jira_close_issue with key; optional status forwarded."""
+    _, astore = stores
+    action_id = await astore.create_pending(
+        "proj-1", "jira:close_issue",
+        {"item_id": "ALPHA-7", "ref_key": "jira_project_key", "status": "Resolved"},
+    )
+    await astore.approve(action_id)
+    action = await astore.get(action_id)
+
+    mcp = _FakeMCPClient([{"key": "ALPHA-7", "url": "https://jira/ALPHA-7", "transitioned_to": "Resolved"}])
+    result = await execute_action(action, mcp=mcp, project_store=_FakeProjectStore())
+
+    assert result["transitioned_to"] == "Resolved"
+    name, args = mcp._calls[0]
+    assert name == "jira_close_issue"
+    assert args["key"] == "ALPHA-7"
+    assert args["status"] == "Resolved"
+
+
+async def test_execute_action_jira_close_no_status(stores):
+    """jira:close_issue without explicit status omits status arg (mcp defaults to Done)."""
+    _, astore = stores
+    action_id = await astore.create_pending(
+        "proj-1", "jira:close_issue",
+        {"item_id": "ALPHA-8", "ref_key": "jira_project_key"},
+    )
+    await astore.approve(action_id)
+    action = await astore.get(action_id)
+
+    mcp = _FakeMCPClient([{"key": "ALPHA-8", "url": "", "transitioned_to": "Done"}])
+    await execute_action(action, mcp=mcp, project_store=_FakeProjectStore())
+
+    _, args = mcp._calls[0]
+    assert "status" not in args

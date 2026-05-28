@@ -95,6 +95,21 @@ func (r *Registry) Call(name string, args map[string]any) (mcp.ToolCallResult, e
 			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
 		}
 		return r.jira.addComment(args)
+	case "jira_create_issue":
+		if r.jira == nil {
+			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
+		}
+		return r.jira.createIssue(args)
+	case "jira_update_issue":
+		if r.jira == nil {
+			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
+		}
+		return r.jira.updateIssue(args)
+	case "jira_close_issue":
+		if r.jira == nil {
+			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
+		}
+		return r.jira.closeIssue(args)
 
 	// github
 	case "github_list_issues":

@@ -31,10 +31,37 @@ from projects import ProjectStore
 logger = logging.getLogger("uvicorn.error")
 
 # All action types this module knows how to execute.
-VALID_ACTION_TYPES = {"jira:add_comment", "github:add_comment"}
+VALID_ACTION_TYPES = {
+    "jira:add_comment",
+    "jira:create_issue",
+    "jira:update_issue",
+    "jira:close_issue",
+    "github:add_comment",
+}
 
 # ref_keys that correspond to known PM tools in the mcp-server.
 _KNOWN_REF_KEYS = {"jira_project_key", "github_repo"}
+
+# Required payload fields per action type.
+# Fields listed here must be non-empty strings in the payload.
+_REQUIRED_PAYLOAD_FIELDS: dict[str, list[str]] = {
+    "jira:add_comment":  ["item_id", "body", "ref_key"],
+    "jira:create_issue": ["ref_key", "summary"],
+    "jira:update_issue": ["item_id", "ref_key"],
+    "jira:close_issue":  ["item_id", "ref_key"],
+    "github:add_comment": ["item_id", "body", "ref_key"],
+}
+
+
+def validate_payload(action_type: str, payload: dict) -> str | None:
+    """Return the name of the first missing required field, or None if valid.
+
+    Callers should raise HTTPException(400) when this returns a field name.
+    """
+    for field in _REQUIRED_PAYLOAD_FIELDS.get(action_type, []):
+        if not payload.get(field):
+            return field
+    return None
 
 
 @dataclass
@@ -256,11 +283,14 @@ async def execute_action(
     mark_failed() if an exception escapes.
     """
     ref_key = action.payload.get("ref_key")
-    item_id = action.payload.get("item_id")
+    item_id = action.payload.get("item_id")  # absent for create actions
     body = action.payload.get("body", "")
 
-    if not ref_key or not item_id:
-        raise ValueError("Action payload must contain 'ref_key' and 'item_id'")
+    if not ref_key:
+        raise ValueError("Action payload must contain 'ref_key'")
+    # item_id is required for all action types except jira:create_issue.
+    if action.action_type != "jira:create_issue" and not item_id:
+        raise ValueError("Action payload must contain 'item_id'")
 
     project = await project_store.get(action.project_id)
     if project is None:
@@ -297,6 +327,47 @@ async def execute_action(
             "id": result.get("comment_id", ""),
             "url": result.get("url", ""),
             "created_at": result.get("created_at", ""),
+        }
+
+    if action.action_type == "jira:create_issue":
+        mcp_args: dict = {
+            "project_key": ref_value,
+            "summary": action.payload.get("summary", ""),
+        }
+        if action.payload.get("issue_type"):
+            mcp_args["issue_type"] = action.payload["issue_type"]
+        if action.payload.get("description"):
+            mcp_args["description"] = action.payload["description"]
+        result = await mcp.call("jira_create_issue", mcp_args)
+        return {
+            "id": result.get("key", ""),
+            "url": result.get("url", ""),
+            "created_at": "",
+        }
+
+    if action.action_type == "jira:update_issue":
+        mcp_args = {"key": item_id}
+        if action.payload.get("summary"):
+            mcp_args["summary"] = action.payload["summary"]
+        if action.payload.get("description"):
+            mcp_args["description"] = action.payload["description"]
+        result = await mcp.call("jira_update_issue", mcp_args)
+        return {
+            "id": item_id,
+            "url": result.get("url", ""),
+            "created_at": "",
+        }
+
+    if action.action_type == "jira:close_issue":
+        mcp_args = {"key": item_id}
+        if action.payload.get("status"):
+            mcp_args["status"] = action.payload["status"]
+        result = await mcp.call("jira_close_issue", mcp_args)
+        return {
+            "id": item_id,
+            "url": result.get("url", ""),
+            "transitioned_to": result.get("transitioned_to", ""),
+            "created_at": "",
         }
 
     if action.action_type == "github:add_comment":

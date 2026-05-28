@@ -66,6 +66,24 @@ func (c *jiraClient) post(path string, payload any) ([]byte, int, error) {
 	return body, resp.StatusCode, nil
 }
 
+func (c *jiraClient) put(path string, payload any) ([]byte, int, error) {
+	b, _ := json.Marshal(payload)
+	req, err := http.NewRequest("PUT", c.baseURL+path, strings.NewReader(string(b)))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.SetBasicAuth(c.email, c.token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 100*1024))
+	return body, resp.StatusCode, nil
+}
+
 func (c *jiraClient) searchIssues(args map[string]any) (mcp.ToolCallResult, error) {
 	query, errResult, err := requireString(args, "query")
 	if errResult != nil {
@@ -231,6 +249,173 @@ func (c *jiraClient) addComment(args map[string]any) (mcp.ToolCallResult, error)
 	})
 }
 
+func (c *jiraClient) createIssue(args map[string]any) (mcp.ToolCallResult, error) {
+	projectKey, errResult, err := requireString(args, "project_key")
+	if errResult != nil {
+		return *errResult, err
+	}
+	summary, errResult, err := requireString(args, "summary")
+	if errResult != nil {
+		return *errResult, err
+	}
+	issueType := optionalString(args, "issue_type", "Task")
+	description := optionalString(args, "description", "")
+
+	fields := map[string]any{
+		"project":   map[string]string{"key": projectKey},
+		"summary":   summary,
+		"issuetype": map[string]string{"name": issueType},
+	}
+	if description != "" {
+		fields["description"] = map[string]any{
+			"type":    "doc",
+			"version": 1,
+			"content": []any{
+				map[string]any{
+					"type": "paragraph",
+					"content": []any{
+						map[string]any{"type": "text", "text": description},
+					},
+				},
+			},
+		}
+	}
+
+	raw, status, err := c.post("/rest/api/3/issue", map[string]any{"fields": fields})
+	if err != nil {
+		return textErr(fmt.Sprintf("jira request failed: %v", err))
+	}
+	if status != 201 {
+		return textErr(fmt.Sprintf("jira error %d: %s", status, string(raw)))
+	}
+
+	var result struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return textErr(fmt.Sprintf("parse response failed: %v", err))
+	}
+
+	return textResult(map[string]any{
+		"key": result.Key,
+		"url": c.baseURL + "/browse/" + result.Key,
+	})
+}
+
+func (c *jiraClient) updateIssue(args map[string]any) (mcp.ToolCallResult, error) {
+	key, errResult, err := requireString(args, "key")
+	if errResult != nil {
+		return *errResult, err
+	}
+
+	fields := map[string]any{}
+	if summary := optionalString(args, "summary", ""); summary != "" {
+		fields["summary"] = summary
+	}
+	if description := optionalString(args, "description", ""); description != "" {
+		fields["description"] = map[string]any{
+			"type":    "doc",
+			"version": 1,
+			"content": []any{
+				map[string]any{
+					"type": "paragraph",
+					"content": []any{
+						map[string]any{"type": "text", "text": description},
+					},
+				},
+			},
+		}
+	}
+	if len(fields) == 0 {
+		return textErr("at least one of 'summary' or 'description' must be provided")
+	}
+
+	path := fmt.Sprintf("/rest/api/3/issue/%s", url.PathEscape(key))
+	raw, status, err := c.put(path, map[string]any{"fields": fields})
+	if err != nil {
+		return textErr(fmt.Sprintf("jira request failed: %v", err))
+	}
+	// Jira returns 204 No Content on success.
+	if status != 204 {
+		return textErr(fmt.Sprintf("jira error %d: %s", status, string(raw)))
+	}
+
+	return textResult(map[string]any{
+		"key":     key,
+		"url":     c.baseURL + "/browse/" + key,
+		"updated": true,
+	})
+}
+
+func (c *jiraClient) closeIssue(args map[string]any) (mcp.ToolCallResult, error) {
+	key, errResult, err := requireString(args, "key")
+	if errResult != nil {
+		return *errResult, err
+	}
+	targetStatus := optionalString(args, "status", "Done")
+
+	// Step 1: fetch available transitions.
+	transPath := fmt.Sprintf("/rest/api/3/issue/%s/transitions", url.PathEscape(key))
+	raw, status, err := c.get(transPath)
+	if err != nil {
+		return textErr(fmt.Sprintf("jira request failed: %v", err))
+	}
+	if status != 200 {
+		return textErr(fmt.Sprintf("jira error %d: %s", status, string(raw)))
+	}
+
+	var transResult struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			To   struct {
+				Name string `json:"name"`
+			} `json:"to"`
+		} `json:"transitions"`
+	}
+	if err := json.Unmarshal(raw, &transResult); err != nil {
+		return textErr(fmt.Sprintf("parse transitions failed: %v", err))
+	}
+
+	// Step 2: match by transition name or destination status name (case-insensitive).
+	var matchID, matchName string
+	var available []string
+	for _, t := range transResult.Transitions {
+		available = append(available, t.Name)
+		tName := strings.ToLower(t.Name)
+		toName := strings.ToLower(t.To.Name)
+		target := strings.ToLower(targetStatus)
+		if tName == target || toName == target {
+			matchID = t.ID
+			matchName = t.Name
+			break
+		}
+	}
+	if matchID == "" {
+		return textErr(fmt.Sprintf(
+			"no transition matching %q found for issue %s. Available: %v",
+			targetStatus, key, available,
+		))
+	}
+
+	// Step 3: apply the transition.
+	payload := map[string]any{"transition": map[string]string{"id": matchID}}
+	raw, status, err = c.post(transPath, payload)
+	if err != nil {
+		return textErr(fmt.Sprintf("jira request failed: %v", err))
+	}
+	// Jira returns 204 No Content on success.
+	if status != 204 {
+		return textErr(fmt.Sprintf("jira error %d: %s", status, string(raw)))
+	}
+
+	return textResult(map[string]any{
+		"key":             key,
+		"url":             c.baseURL + "/browse/" + key,
+		"transitioned_to": matchName,
+	})
+}
+
 // adfToText extracts plain text from Atlassian Document Format (ADF).
 func adfToText(node any) string {
 	if node == nil {
@@ -295,6 +480,45 @@ func jiraDefinitions() []mcp.ToolDefinition {
 					"body": {Type: "string", Description: "Comment text to post."},
 				},
 				Required: []string{"key", "body"},
+			},
+		},
+		{
+			Name:        "jira_create_issue",
+			Description: "Create a new Jira issue in a project. Returns the new issue key and URL.",
+			InputSchema: mcp.JSONSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"project_key": {Type: "string", Description: `Jira project key, e.g. "PROJ".`},
+					"summary":     {Type: "string", Description: "One-line issue title."},
+					"issue_type":  {Type: "string", Description: `Issue type name, e.g. "Task", "Bug", "Story". Defaults to "Task".`},
+					"description": {Type: "string", Description: "Optional longer description (plain text)."},
+				},
+				Required: []string{"project_key", "summary"},
+			},
+		},
+		{
+			Name:        "jira_update_issue",
+			Description: "Update the summary or description of an existing Jira issue. Provide at least one field to change.",
+			InputSchema: mcp.JSONSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key":         {Type: "string", Description: `Jira issue key, e.g. "PROJ-123".`},
+					"summary":     {Type: "string", Description: "New one-line title (optional)."},
+					"description": {Type: "string", Description: "New description text (optional)."},
+				},
+				Required: []string{"key"},
+			},
+		},
+		{
+			Name:        "jira_close_issue",
+			Description: `Transition a Jira issue to a closed/done status. Fetches available transitions and matches by name (default "Done"). Returns the transition name applied.`,
+			InputSchema: mcp.JSONSchema{
+				Type: "object",
+				Properties: map[string]mcp.Property{
+					"key":    {Type: "string", Description: `Jira issue key, e.g. "PROJ-123".`},
+					"status": {Type: "string", Description: `Target status name to transition to. Defaults to "Done". Common values: "Done", "Closed", "Resolved".`},
+				},
+				Required: []string{"key"},
 			},
 		},
 	}
