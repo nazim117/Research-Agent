@@ -1,0 +1,742 @@
+openapi: "3.0.3"
+info:
+  title: chat-agent
+  version: "1.0.0"
+  description: Local-first project-brain assistant API.
+
+servers:
+  - url: http://localhost:8000
+
+paths:
+  /health:
+    get:
+      summary: Liveness check
+      operationId: health
+      responses:
+        "200":
+          description: Service is running
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /projects:
+    get:
+      summary: List all projects
+      operationId: listProjects
+      responses:
+        "200":
+          description: Array of projects, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      summary: Create a project
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectCreateRequest"
+      responses:
+        "200":
+          description: Created project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "409":
+          description: A project with that name already exists
+
+  /projects/{project_id}:
+    patch:
+      summary: Partial update of a project
+      operationId: patchProject
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdateRequest"
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+        "404":
+          description: Project not found
+        "409":
+          description: Name already taken
+    delete:
+      summary: Delete a project and all its state
+      operationId: deleteProject
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Project deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        "404":
+          description: Project not found
+
+  /projects/{project_id}/sync:
+    post:
+      summary: Sync PM integrations into the project RAG store
+      operationId: syncProject
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Sync results
+        "400":
+          description: No external_refs configured
+        "404":
+          description: Project not found
+        "502":
+          description: PM API unreachable or returned an error
+    get:
+      summary: Get last-synced timestamps per external ref
+      operationId: getSyncStatus
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Sync status per ref
+        "404":
+          description: Project not found
+
+  /projects/{project_id}/actions:
+    post:
+      summary: Propose a pending action for human approval
+      operationId: proposeAction
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProposeActionRequest"
+      responses:
+        "200":
+          description: Created pending action
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Action"
+        "400":
+          description: Invalid action_type or payload
+        "404":
+          description: Project not found
+    get:
+      summary: List actions for a project
+      operationId: listActions
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            example: pending
+      responses:
+        "200":
+          description: List of actions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Action"
+
+  /actions/{action_id}/approve:
+    post:
+      summary: Approve and execute a pending action
+      operationId: approveAction
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Action executed
+        "400":
+          description: Action is not pending
+        "404":
+          description: Action not found
+        "502":
+          description: Integration call failed
+
+  /actions/{action_id}/reject:
+    post:
+      summary: Reject a pending action
+      operationId: rejectAction
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Action rejected
+        "400":
+          description: Action cannot be rejected in its current state
+        "404":
+          description: Action not found
+
+  /chat:
+    post:
+      summary: Send a message to the project brain
+      operationId: chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Assistant reply with optional citations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+
+  /ingest:
+    post:
+      summary: Ingest a document (chunk + embed)
+      operationId: ingest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestRequest"
+      responses:
+        "200":
+          description: Number of chunks stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResponse"
+
+  /ingest/transcript:
+    post:
+      summary: Ingest a pasted transcript (chunk + extract decisions/actions/risks)
+      operationId: ingestTranscript
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestTranscriptRequest"
+      responses:
+        "200":
+          description: Ingest counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestTranscriptResponse"
+
+  /ingest/file:
+    post:
+      summary: Upload and ingest a file
+      operationId: ingestFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [project_id, file]
+              properties:
+                project_id:
+                  type: string
+                  format: uuid
+                kind:
+                  type: string
+                  enum: [document, transcript]
+                  default: document
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Ingest counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestTranscriptResponse"
+
+  /ingest/url:
+    post:
+      summary: Fetch and ingest content at a URL
+      operationId: ingestUrl
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, url]
+              properties:
+                project_id:
+                  type: string
+                  format: uuid
+                url:
+                  type: string
+                  format: uri
+                kind:
+                  type: string
+                  enum: [document, transcript]
+                  default: document
+      responses:
+        "200":
+          description: Ingest counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestTranscriptResponse"
+
+  /projects/{project_id}/decisions:
+    get:
+      summary: List decisions extracted from transcripts
+      operationId: listDecisions
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: List of decisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Decision"
+
+  /projects/{project_id}/action-items:
+    get:
+      summary: List transcript action items
+      operationId: listActionItems
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [open, done]
+      responses:
+        "200":
+          description: List of action items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActionItem"
+
+  /projects/{project_id}/risks:
+    get:
+      summary: List risks extracted from transcripts
+      operationId: listRisks
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: List of risks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Risk"
+
+  /projects/{project_id}/briefing:
+    get:
+      summary: Project status snapshot with AI summary
+      operationId: getBriefing
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Briefing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Briefing"
+
+  /projects/{project_id}/standup:
+    get:
+      summary: Daily standup (Yesterday / Today / Blockers)
+      operationId: getStandup
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Standup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Standup"
+
+  /projects/{project_id}/sources:
+    get:
+      summary: List ingested document sources with chunk counts
+      operationId: listSources
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: List of sources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Source"
+
+  /memory/search:
+    get:
+      summary: Semantic search over conversation memory
+      operationId: memorySearch
+      parameters:
+        - name: project_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: k
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+      responses:
+        "200":
+          description: Memory hits
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MemoryHit"
+
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    Project:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Stable UUID assigned at creation.
+        name:
+          type: string
+          description: Human-readable project name.
+        created_at:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC timestamp (e.g. "2026-04-18T11:08:07Z").
+        external_refs:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Bag of PM references (jira_project_key, github_repo, ...).
+
+    ProjectCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        external_refs:
+          type: object
+          additionalProperties: true
+          default: {}
+
+    ProjectUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        external_refs:
+          type: object
+          additionalProperties: true
+          nullable: true
+
+    ProposeActionRequest:
+      type: object
+      required: [action_type, payload]
+      properties:
+        action_type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+
+    Action:
+      type: object
+      required: [id, project_id, action_type, status, payload, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        action_type:
+          type: string
+        status:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ChatRequest:
+      type: object
+      required: [project_id, session_id, message]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+        message:
+          type: string
+
+    ChatResponse:
+      type: object
+      required: [reply]
+      properties:
+        reply:
+          type: string
+        citations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Citation"
+
+    Citation:
+      type: object
+      required: [ref, source, chunk_index]
+      properties:
+        ref:
+          type: integer
+        source:
+          type: string
+        chunk_index:
+          type: integer
+
+    IngestRequest:
+      type: object
+      required: [project_id, source, text]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        text:
+          type: string
+
+    IngestResponse:
+      type: object
+      required: [chunks]
+      properties:
+        chunks:
+          type: integer
+
+    IngestTranscriptRequest:
+      type: object
+      required: [project_id, source, text]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        text:
+          type: string
+
+    IngestTranscriptResponse:
+      type: object
+      required: [chunks, decisions, action_items, risks]
+      properties:
+        chunks:
+          type: integer
+        decisions:
+          type: integer
+        action_items:
+          type: integer
+        risks:
+          type: integer
+
+    Decision:
+      type: object
+      required: [id, source, text, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        text:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ActionItem:
+      type: object
+      required: [id, source, text, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        owner:
+          type: string
+          nullable: true
+        text:
+          type: string
+        due_date:
+          type: string
+          nullable: true
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Risk:
+      type: object
+      required: [id, source, text, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source:
+          type: string
+        text:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Briefing:
+      type: object
+      required: [summary, open_actions, recent_decisions, active_risks, generated_at]
+      properties:
+        summary:
+          type: string
+        open_actions:
+          type: array
+          items:
+            type: object
+        recent_decisions:
+          type: array
+          items:
+            type: object
+        active_risks:
+          type: array
+          items:
+            type: object
+        generated_at:
+          type: string
+          format: date-time
+
+    Standup:
+      type: object
+      required: [summary, done, today, blockers, generated_at]
+      properties:
+        summary:
+          type: string
+        done:
+          type: array
+          items:
+            type: string
+        today:
+          type: array
+          items:
+            type: string
+        blockers:
+          type: array
+          items:
+            type: string
+        generated_at:
+          type: string
+          format: date-time
+
+    Source:
+      type: object
+      required: [source, chunks]
+      properties:
+        source:
+          type: string
+        chunks:
+          type: integer
+
+    MemoryHit:
+      type: object
+      required: [score, role, content, session_id]
+      properties:
+        score:
+          type: number
+          format: float
+        role:
+          type: string
+        content:
+          type: string
+        session_id:
+          type: string

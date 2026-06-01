@@ -27,7 +27,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
 
 import httpx
 
@@ -179,7 +181,18 @@ class ProjectOut(BaseModel):
     id: str
     name: str
     created_at: str
-    external_refs: dict
+    external_refs: dict[str, Any] | None = None
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _normalise_created_at(cls, v: str) -> str:
+        # SQLite stores datetime('now') as "YYYY-MM-DD HH:MM:SS" (no T, no Z).
+        # Convert to ISO 8601 with T separator and UTC Z suffix.
+        if v and " " in v and "T" not in v:
+            v = v.replace(" ", "T")
+        if v and not v.endswith("Z"):
+            v = v + "Z"
+        return v
 
 
 def _project_to_out(p: Project) -> ProjectOut:
