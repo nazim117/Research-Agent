@@ -50,16 +50,13 @@ jobs:
         working-directory: services/chat-agent
 
     # Qdrant runs as a Docker service container on the same network as the job.
+    # No --health-cmd: the Qdrant image has no curl/wget, so the built-in
+    # health-check always fails. We poll from the runner in the step below.
     services:
       qdrant:
         image: qdrant/qdrant:v1.12.1
         ports:
           - 6333:6333
-        options: >-
-          --health-cmd "curl -f http://localhost:6333/collections || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -73,20 +70,15 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # Install Ollama, pull the embedding model and a small chat model.
-      # nomic-embed-text is required for all rag/embeddings tests.
-      # llama3.2:1b is the smallest available model for the LLM integration test.
-      - name: Install Ollama
+      - name: Wait for Qdrant
         run: |
-          curl -fsSL https://ollama.ai/install.sh | sh
-          ollama serve &
-          sleep 5
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:6333/collections && break || sleep 2
+          done
 
-      - name: Pull Ollama models
-        run: |
-          ollama pull nomic-embed-text
-          ollama pull llama3.2:1b
-        continue-on-error: true  # don't fail the job if a model pull is slow
+      # Ollama is not installed: model pulls are multi-GB and slow.
+      # Tests that require Ollama (embeddings, RAG, LLM) detect the missing
+      # service via the ollama_up fixture and skip themselves automatically.
 
       # Build and start the mcp-server (no vendor credentials — Jira/GitHub
       # tools will return isError=true, which is exactly the path we test).
@@ -115,7 +107,6 @@ jobs:
           OTEL_ENABLED: "false"
           METRICS_ENABLED: "false"
           DEEPSEEK_API_KEY: dummy-key-for-ci
-          OLLAMA_CHAT_MODEL: llama3.2:1b
         # Tests that cannot reach a service skip themselves — no hard failures
         # from missing infrastructure.
         run: pytest tests/ -m integration -v

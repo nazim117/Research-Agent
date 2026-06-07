@@ -23,7 +23,7 @@
 import json
 import logging
 import re
-import uuid
+import time as _time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -37,6 +37,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 import httpx
+import metrics as _metrics_mod
 
 from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, validate_payload
 from config import settings
@@ -215,9 +216,6 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestIdMiddleware)
 
-
-import time as _time
-import metrics as _metrics_mod
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     """Record HTTP request count and latency into Prometheus.
