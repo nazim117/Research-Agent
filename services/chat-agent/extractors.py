@@ -144,14 +144,18 @@ def _extract_youtube(url: str) -> str:
     if not vid:
         raise HTTPException(400, f"Could not parse YouTube video id from {url!r}")
     try:
-        items = YouTubeTranscriptApi.get_transcript(vid)
+        # v1.x API: instantiate the client, then fetch() returns a
+        # FetchedTranscript (iterable of snippets with a .text attribute) —
+        # replaces the old YouTubeTranscriptApi.get_transcript() classmethod
+        # that returned a list of dicts.
+        fetched = YouTubeTranscriptApi().fetch(vid)
     except Exception as exc:
         # Common case: video has no captions. Surface a clear message.
         raise HTTPException(
             400,
             f"YouTube transcript fetch failed (video may have no captions): {exc}",
         ) from exc
-    return "\n".join(it["text"] for it in items if it.get("text"))
+    return "\n".join(snippet.text for snippet in fetched if snippet.text)
 
 
 def _extract_wikipedia(url: str) -> str:
