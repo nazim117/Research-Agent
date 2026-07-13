@@ -12,11 +12,8 @@
 
 import httpx
 from fastapi import HTTPException
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
 
 from config import settings
-import metrics as _metrics
 
 
 # ─── Backend implementations ──────────────────────────────────────────────────
@@ -104,10 +101,6 @@ async def _chat_openai_compatible(messages: list[dict]) -> tuple[str, dict]:
 async def chat(messages: list[dict]) -> str:
     """Route a chat completion to the backend fixed in LLM_PROVIDER.
 
-    Token usage is captured as a side-effect on the current OTEL span so that
-    callers (briefing, standup, transcript, main) don't need to change their
-    return-type expectations.  If no span is active the usage is silently dropped.
-
     Args:
         messages: Full conversation history as {"role", "content"} dicts.
                   The entire history must be sent — LLMs are stateless.
@@ -120,46 +113,19 @@ async def chat(messages: list[dict]) -> str:
         HTTPException(502): Backend unreachable or returned an error.
     """
     p = settings.llm_provider
-    tracer = trace.get_tracer(__name__)
 
-    # Which model label do we show on the span?
-    model_label = (
-        settings.ollama_chat_model if p == "ollama" else settings.openai_model
-    )
+    if p == "ollama":
+        reply, _ = await _chat_ollama(messages)
+    elif p == "openai_compatible":
+        reply, _ = await _chat_openai_compatible(messages)
+    else:
+        raise HTTPException(
+            500,
+            f"Unknown LLM_PROVIDER {p!r}. Valid options: ollama, openai_compatible. "
+            "Fix the LLM_PROVIDER env var and restart.",
+        )
 
-    with tracer.start_as_current_span("llm.chat") as span:
-        span.set_attribute("llm.provider", p)
-        span.set_attribute("llm.model", model_label)
-        span.set_attribute("llm.messages_count", len(messages))
-
-        try:
-            if p == "ollama":
-                reply, usage = await _chat_ollama(messages)
-            elif p == "openai_compatible":
-                reply, usage = await _chat_openai_compatible(messages)
-            else:
-                raise HTTPException(
-                    500,
-                    f"Unknown LLM_PROVIDER {p!r}. Valid options: ollama, openai_compatible. "
-                    "Fix the LLM_PROVIDER env var and restart.",
-                )
-        except HTTPException:
-            span.set_status(Status(StatusCode.ERROR))
-            # Record the failed call so error rate panels in Grafana show it.
-            _metrics.record_llm_usage(p, model_label, {}, "error")
-            raise
-
-        # Attach token counts to the span so they appear in Jaeger.
-        # Use .get() so a mock or non-standard provider returning {} doesn't crash.
-        span.set_attribute("llm.usage.prompt_tokens", usage.get("prompt_tokens", 0))
-        span.set_attribute("llm.usage.completion_tokens", usage.get("completion_tokens", 0))
-        span.set_attribute("llm.usage.total_tokens", usage.get("total_tokens", 0))
-
-        # Record token throughput and estimated cost in Prometheus.
-        # This is the "cost-aware" instrumentation the project is named after.
-        _metrics.record_llm_usage(p, model_label, usage, "ok")
-
-        return reply
+    return reply
 
 
 # ─── Startup validation ────────────────────────────────────────────────────────

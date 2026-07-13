@@ -21,8 +21,6 @@
 
 import ollama
 from fastapi import HTTPException
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
 
 from config import settings
 
@@ -40,25 +38,19 @@ async def embed(text: str) -> list[float]:
     Raises:
         HTTPException(502): If Ollama is unreachable or returns an error.
     """
-    tracer = trace.get_tracer(__name__)
-    with tracer.start_as_current_span("embed") as span:
-        span.set_attribute("embed.model", settings.ollama_embed_model)
-        span.set_attribute("embed.text_len", len(text))
+    try:
+        client = ollama.AsyncClient(host=settings.ollama_base_url)
+        # embed() is the modern Ollama API for embeddings (replaces embeddings()).
+        # It returns an EmbedResponse object; .embeddings is a list of vectors
+        # (one per input string).  We pass a single string so we take index [0].
+        response = await client.embed(
+            model=settings.ollama_embed_model,
+            input=text,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach Ollama at {settings.ollama_base_url}: {exc}",
+        ) from exc
 
-        try:
-            client = ollama.AsyncClient(host=settings.ollama_base_url)
-            # embed() is the modern Ollama API for embeddings (replaces embeddings()).
-            # It returns an EmbedResponse object; .embeddings is a list of vectors
-            # (one per input string).  We pass a single string so we take index [0].
-            response = await client.embed(
-                model=settings.ollama_embed_model,
-                input=text,
-            )
-        except Exception as exc:
-            span.set_status(Status(StatusCode.ERROR))
-            raise HTTPException(
-                status_code=502,
-                detail=f"Could not reach Ollama at {settings.ollama_base_url}: {exc}",
-            ) from exc
-
-        return response.embeddings[0]
+    return response.embeddings[0]

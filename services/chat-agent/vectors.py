@@ -37,8 +37,6 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from fastapi import HTTPException
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance,
@@ -178,23 +176,16 @@ class VectorStore:
         stored_payload = dict(payload)
         stored_payload[PROJECT_ID_KEY] = project_id
 
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("qdrant.upsert") as span:
-            span.set_attribute("qdrant.collection", collection)
-            span.set_attribute("db.system", "qdrant")
-            span.set_attribute("project_id", project_id)
-
-            try:
-                await self._client.upsert(
-                    collection_name=collection,
-                    points=[PointStruct(id=point_id, vector=vector, payload=stored_payload)],
-                )
-            except Exception as exc:
-                span.set_status(Status(StatusCode.ERROR))
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Qdrant upsert failed: {exc}",
-                ) from exc
+        try:
+            await self._client.upsert(
+                collection_name=collection,
+                points=[PointStruct(id=point_id, vector=vector, payload=stored_payload)],
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Qdrant upsert failed: {exc}",
+            ) from exc
 
         return point_id
 
@@ -217,31 +208,21 @@ class VectorStore:
         Returns:
             List of Hit objects ordered by score descending (most similar first).
         """
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("qdrant.search") as span:
-            span.set_attribute("qdrant.collection", collection)
-            span.set_attribute("db.system", "qdrant")
-            span.set_attribute("project_id", project_id)
-            span.set_attribute("qdrant.limit", k)
-
-            try:
-                results = await self._client.search(
-                    collection_name=collection,
-                    query_vector=vector,
-                    limit=k,
-                    with_payload=True,   # include the stored payload in results
-                    # The filter is the whole point of this method:
-                    # Qdrant will only consider points where project_id matches.
-                    query_filter=_project_filter(project_id),
-                )
-            except Exception as exc:
-                span.set_status(Status(StatusCode.ERROR))
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Qdrant search failed: {exc}",
-                ) from exc
-
-            span.set_attribute("qdrant.results_count", len(results))
+        try:
+            results = await self._client.search(
+                collection_name=collection,
+                query_vector=vector,
+                limit=k,
+                with_payload=True,   # include the stored payload in results
+                # The filter is the whole point of this method:
+                # Qdrant will only consider points where project_id matches.
+                query_filter=_project_filter(project_id),
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Qdrant search failed: {exc}",
+            ) from exc
 
         return [
             Hit(

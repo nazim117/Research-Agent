@@ -23,12 +23,10 @@
 import json
 import logging
 import re
-import time as _time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from opentelemetry import trace
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
@@ -37,7 +35,6 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 import httpx
-import metrics as _metrics_mod
 
 from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, validate_payload
 from config import settings
@@ -45,8 +42,6 @@ from embeddings import embed
 from mcp_client import MCPClient, MCPError
 from llm import chat, validate_llm_config
 from memory import ConversationStore
-from observability import setup_telemetry, instrument_app
-from prometheus_client import make_asgi_app as _make_metrics_app
 from projects import SCHEMA_VERSION, Project, ProjectStore
 import rag
 from request_context import set_request_id, new_request_id
@@ -156,19 +151,7 @@ async def lifespan(app: FastAPI):
     # Shutdown: no explicit cleanup needed for either store.
 
 
-# Bootstrap logging + tracer provider before app creation, then instrument the
-# app before any add_middleware() calls — Starlette forbids middleware after startup.
-setup_telemetry()
-
 app = FastAPI(title="chat-agent", lifespan=lifespan)
-instrument_app(app)
-
-# Mount /metrics for Prometheus scraping.
-# make_asgi_app() returns a pure ASGI app that serves the default registry —
-# the same registry our custom counters in metrics.py write to.
-# No middleware conflict: app.mount() adds a sub-application, not middleware.
-if settings.metrics_enabled:
-    app.mount("/metrics", _make_metrics_app())
 
 # CORS — allow the Chrome extension (and any localhost origin) to call this API.
 #
@@ -192,8 +175,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     e.g. the Chrome extension could send one).  If absent, generates a UUID-4.
     The id is:
       1. Stored in a contextvar so structured log lines pick it up automatically.
-      2. Set as a span attribute "request.id" on the active OTEL span.
-      3. Echoed back in the X-Request-ID response header so callers can correlate
+      2. Echoed back in the X-Request-ID response header so callers can correlate
          their own logs with ours.
     """
 
@@ -203,53 +185,12 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         req_id = request.headers.get("X-Request-ID") or new_request_id()
         set_request_id(req_id)
 
-        # Attach to the current OTEL span so Jaeger shows the request-id
-        # alongside the trace — useful when correlating browser logs with traces.
-        span = trace.get_current_span()
-        if span.is_recording():
-            span.set_attribute("request.id", req_id)
-
         response = await call_next(request)
         response.headers["X-Request-ID"] = req_id
         return response
 
 
 app.add_middleware(RequestIdMiddleware)
-
-
-class MetricsMiddleware(BaseHTTPMiddleware):
-    """Record HTTP request count and latency into Prometheus.
-
-    Replaces prometheus-fastapi-instrumentator which conflicted with the
-    starlette version required by the Python 3.12 Docker image.
-    Uses the matched route path template (e.g. "/chat") as the handler label
-    so high-cardinality paths (e.g. "/projects/{id}") don't explode the registry.
-    """
-
-    async def dispatch(self, request: StarletteRequest, call_next) -> StarletteResponse:
-        start = _time.perf_counter()
-        response = await call_next(request)
-        duration = _time.perf_counter() - start
-
-        # Prefer the matched route template over the raw URL path to avoid
-        # high cardinality (e.g. /projects/abc and /projects/xyz → "/projects/{id}").
-        route = request.scope.get("route")
-        handler = route.path if route else request.url.path
-
-        _metrics_mod.http_requests_total.labels(
-            method=request.method,
-            handler=handler,
-            status_code=str(response.status_code),
-        ).inc()
-        _metrics_mod.http_request_duration_seconds.labels(
-            method=request.method,
-            handler=handler,
-        ).observe(duration)
-
-        return response
-
-if settings.metrics_enabled:
-    app.add_middleware(MetricsMiddleware)
 
 
 # Project CRUD models

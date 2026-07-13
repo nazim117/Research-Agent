@@ -104,8 +104,6 @@ jobs:
           QDRANT_URL: http://localhost:6333
           OLLAMA_BASE_URL: http://localhost:11434
           MCP_BASE_URL: http://localhost:8083
-          OTEL_ENABLED: "false"
-          METRICS_ENABLED: "false"
           DEEPSEEK_API_KEY: dummy-key-for-ci
         # Tests that cannot reach a service skip themselves — no hard failures
         # from missing infrastructure.

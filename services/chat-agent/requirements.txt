@@ -15,15 +15,3 @@ python-docx==1.1.2
 faster-whisper==1.1.0
 youtube-transcript-api==0.6.3
 trafilatura==2.0.0
-# Observability — Prometheus metrics endpoint (raw client, no starlette conflict)
-prometheus-client==0.21.1
-# Observability — OpenTelemetry tracing + structured logging
-# SDK: core API + in-process tracing machinery
-opentelemetry-sdk==1.29.0
-# OTLP/HTTP exporter — ships spans to Jaeger (or any OTLP collector)
-opentelemetry-exporter-otlp-proto-http==1.29.0
-# Auto-instrumentation: FastAPI routes + httpx outbound calls
-# 0.50b0 dropped pkg_resources (requires setuptools) in favour of importlib.metadata
-# — fixes startup crash on Python 3.12 Docker images that ship without setuptools.
-opentelemetry-instrumentation-fastapi==0.50b0
-opentelemetry-instrumentation-httpx==0.50b0

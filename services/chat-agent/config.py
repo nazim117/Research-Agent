@@ -93,31 +93,6 @@ class Settings(BaseSettings):
     jira_api_token: str = ""
     github_token: str = ""
 
-    # ── Observability ─────────────────────────────────────────────────────────
-    # Master switch for OpenTelemetry tracing.  Set OTEL_ENABLED=false to
-    # suppress all trace export (useful in local dev without a Jaeger instance).
-    otel_enabled: bool = True
-
-    # OTEL service name shown in Jaeger's service selector and on every span.
-    otel_service_name: str = "chat-agent"
-
-    # Base URL of the OTLP/HTTP ingest endpoint.  Jaeger all-in-one listens on
-    # port 4318 for OTLP.  Inside Docker Compose this is "http://jaeger:4318";
-    # when running uvicorn directly on the host use "http://localhost:4318".
-    otel_exporter_otlp_endpoint: str = "http://localhost:4318"
-
-    # Minimum log level passed to the logging system.  One of:
-    # DEBUG | INFO | WARNING | ERROR | CRITICAL  (case-insensitive)
-    log_level: str = "INFO"
-
-    # Emit structured JSON log lines (true in prod / Docker).
-    # Set LOG_JSON=false for plain human-readable text during interactive dev.
-    log_json: bool = True
-
-    # Master switch for Prometheus metrics.  Set METRICS_ENABLED=false to
-    # suppress the /metrics endpoint (e.g. in unit tests or restricted envs).
-    metrics_enabled: bool = True
-
     # Check the repo-root .env first, then a local .env next to this file.
     # pydantic-settings reads them left-to-right; later files override earlier ones.
     # Missing files are silently skipped — env vars set in the shell always win.

@@ -19,8 +19,6 @@ from __future__ import annotations
 import json
 
 import httpx
-from opentelemetry import trace
-from opentelemetry.trace import Status, StatusCode
 
 
 class MCPError(Exception):
@@ -60,11 +58,6 @@ class MCPClient:
     async def call(self, name: str, arguments: dict) -> dict:
         """Invoke a named tool on the mcp-server and return the result as a dict.
 
-        A manual "mcp.call" span is created here so that the tool name appears
-        as a meaningful label in Jaeger.  The httpx auto-instrumentation
-        (HTTPXClientInstrumentor) adds a child span for the actual HTTP call and
-        injects the traceparent header, linking this span to the mcp-server trace.
-
         Args:
             name:       Tool name, e.g. "jira_search_issues".
             arguments:  Tool input as a plain dict (will be JSON-encoded).
@@ -76,48 +69,40 @@ class MCPClient:
             MCPError: Connection failure, non-2xx HTTP status, isError=true,
                       or non-JSON response text.
         """
-        tracer = trace.get_tracer(__name__)
-        with tracer.start_as_current_span("mcp.call") as span:
-            span.set_attribute("mcp.tool", name)
-
-            payload = {"name": name, "arguments": arguments}
-            try:
-                async with httpx.AsyncClient(
-                    timeout=self._timeout,
-                    transport=self._transport,
-                ) as client:
-                    resp = await client.post(
-                        f"{self._base_url}/tools/call",
-                        json=payload,
-                    )
-            except httpx.RequestError as exc:
-                span.set_status(Status(StatusCode.ERROR))
-                raise MCPError(f"mcp-server unreachable: {exc}") from exc
-
-            if resp.status_code not in (200, 201):
-                span.set_status(Status(StatusCode.ERROR))
-                raise MCPError(
-                    f"mcp-server returned HTTP {resp.status_code}: {resp.text[:200]}",
-                    status_code=resp.status_code,
+        payload = {"name": name, "arguments": arguments}
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                transport=self._transport,
+            ) as client:
+                resp = await client.post(
+                    f"{self._base_url}/tools/call",
+                    json=payload,
                 )
+        except httpx.RequestError as exc:
+            raise MCPError(f"mcp-server unreachable: {exc}") from exc
 
-            data = resp.json()
+        if resp.status_code not in (200, 201):
+            raise MCPError(
+                f"mcp-server returned HTTP {resp.status_code}: {resp.text[:200]}",
+                status_code=resp.status_code,
+            )
 
-            if data.get("isError"):
-                # mcp-server sets isError=true when a tool call fails (e.g. Jira
-                # returns 401, or required env vars are missing on the Go side).
-                content = data.get("content") or []
-                text = content[0].get("text", "") if content else ""
-                span.set_status(Status(StatusCode.ERROR))
-                raise MCPError(f"tool {name!r} error: {text}")
+        data = resp.json()
 
+        if data.get("isError"):
+            # mcp-server sets isError=true when a tool call fails (e.g. Jira
+            # returns 401, or required env vars are missing on the Go side).
             content = data.get("content") or []
-            if not content:
-                return {}
+            text = content[0].get("text", "") if content else ""
+            raise MCPError(f"tool {name!r} error: {text}")
 
-            raw_text = content[0].get("text", "{}")
-            try:
-                return json.loads(raw_text)
-            except json.JSONDecodeError as exc:
-                span.set_status(Status(StatusCode.ERROR))
-                raise MCPError(f"tool {name!r} returned non-JSON text: {raw_text[:200]}") from exc
+        content = data.get("content") or []
+        if not content:
+            return {}
+
+        raw_text = content[0].get("text", "{}")
+        try:
+            return json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise MCPError(f"tool {name!r} returned non-JSON text: {raw_text[:200]}") from exc
