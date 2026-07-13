@@ -17,7 +17,7 @@
 // The agent server URL is hardcoded to the default port.  If you change
 // settings.port in config.py, update AGENT_URL here too.
 
-const AGENT_URL = "http://localhost:8084";
+const AGENT_URL = "http://localhost:8080";
 
 // ---------------------------------------------------------------------------
 // Local state — mirrors chrome.storage.local, refreshed on load.
@@ -267,7 +267,7 @@ async function sendMessage() {
       setStatus("");
     } catch (err) {
       appendBubble("assistant", `⚠ Briefing failed: ${err.message}`);
-      setStatus("Make sure the chat-agent server is running on port 8084.");
+      setStatus("Make sure the chat-agent server is running on port 8080.");
     } finally {
       setBusy(false);
       inputEl.focus();
@@ -307,7 +307,7 @@ async function sendMessage() {
     loadPendingActions(currentProjectId);
   } catch (err) {
     appendBubble("assistant", `⚠ Error: ${err.message}`);
-    setStatus("Make sure the chat-agent server is running on port 8084.");
+    setStatus("Make sure the chat-agent server is running on port 8080.");
   } finally {
     setBusy(false);
     inputEl.focus();

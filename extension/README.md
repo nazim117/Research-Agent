@@ -12,7 +12,7 @@ Before loading the extension, make sure the agent backend is running:
 docker compose up qdrant -d
 
 # From services/chat-agent/ — start the agent server
-.venv\Scripts\uvicorn main:app --host 0.0.0.0 --port 8084
+.venv\Scripts\uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
 Ollama must also be running with `nomic-embed-text` pulled.

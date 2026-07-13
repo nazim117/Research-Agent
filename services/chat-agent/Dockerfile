@@ -24,8 +24,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # The PORT env var is read by config.py, but uvicorn's --port flag also needs it.
-# We hard-code 8084 here to match docker-compose.yml; override with -e PORT=...
+# We hard-code 8080 here to match docker-compose.yml; override with -e PORT=...
 # if running the container directly on a different port.
-EXPOSE 8084
+EXPOSE 8080
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8084"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

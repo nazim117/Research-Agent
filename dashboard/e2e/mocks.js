@@ -2,7 +2,7 @@
 //
 // Why mock the backend?
 //   The e2e tests drive the React/Vite dashboard UI (http://localhost:5173).
-//   The real chat-agent backend (port 8084) depends on Qdrant, Ollama, and
+//   The real chat-agent backend (port 8080) depends on Qdrant, Ollama, and
 //   an LLM — spinning all of that up for every UI test is slow and fragile.
 //   Instead, Playwright's page.route() intercepts every /api/** request in
 //   the browser and returns canned JSON.  This tests the UI logic (state
