@@ -5,10 +5,11 @@ workers. It keeps project-scoped memory, ingests documents and meeting
 transcripts, retrieves relevant context with RAG, and can sync Jira/GitHub work
 items into a private project knowledge base.
 
-The current active architecture is centered on the FastAPI `chat-agent` service.
-The older Go services in `services/agent-executor`, `services/policy-engine`,
-`services/gateway`, and `services/mcp-server` are legacy code and are not part
-of the active Project Brain runtime.
+The current active architecture is centered on the FastAPI `chat-agent`
+service, backed by the Go `mcp-server` for all Jira/GitHub API calls. The
+original "cost-aware AI agent execution engine" that this repository started
+as (`agent-executor`, `policy-engine`, `gateway`) has been removed; it is not
+part of the active Project Brain runtime.
 
 ## What It Does
 
@@ -30,8 +31,8 @@ flowchart LR
   User["Project manager"] --> Dashboard["React dashboard"]
   User --> Extension["Chrome extension"]
 
-  Dashboard -->|/api in dev| ChatAgent["FastAPI chat-agent :8084"]
-  Extension -->|localhost:8084| ChatAgent
+  Dashboard -->|/api in dev| ChatAgent["FastAPI chat-agent :8080"]
+  Extension -->|localhost:8080| ChatAgent
 
   ChatAgent --> SQLite[("SQLite chat.db")]
   ChatAgent --> Qdrant[("Qdrant")]
@@ -51,15 +52,11 @@ These are the only services needed to run Project Brain:
 | chat-agent | `services/chat-agent/` | FastAPI backend for projects, chat, RAG, memory, sync, transcript processing, and action approval |
 | mcp-server | `services/mcp-server/` | Go service that holds Jira/GitHub credentials and proxies PM tool calls — chat-agent calls this, never the vendor APIs directly |
 | qdrant | Docker image `qdrant/qdrant` | Vector database for conversation and document embeddings |
-| dashboard | `dashboard/` | React UI — **run with `npm run dev` (port 5173), not via Docker Compose** |
+| dashboard | `dashboard/` | React UI on port 5173 — `npm run dev` for hot reload, or the Docker Compose service |
 | extension | `extension/` | Chrome side panel for chatting, ingesting current pages, syncing, and approving actions |
 | ollama | host service | Local embedding model and optional local chat model |
 
-### Legacy Containers (not used)
-
-`docker compose up` without arguments also starts `policy-engine`, `gateway`, and `agent-executor`. These are legacy Go services from the original cost-aware execution engine. They do nothing in the current Project Brain workflow. Start only the services you need (see Quick Start).
-
-## Repository Layout
+### Repository Layout
 
 ```text
 services/
@@ -77,16 +74,19 @@ services/
     sync.py                 Jira/GitHub sync orchestration
     actions.py              Human approval action lifecycle
     extractors.py           File, audio, YouTube, Wikipedia, and generic URL extraction
-    integrations/
-      base.py               Shared integration contract
-      jira.py               Jira Cloud adapter
-      github.py             GitHub issues adapter
+    mcp_client.py           HTTP client for the mcp-server tool-call API — Jira/GitHub calls go through here
+    request_context.py      Per-request correlation id (contextvar)
     tests/                  pytest coverage for core backend behaviour
+
+  mcp-server/
+    cmd/server/main.go      Entry point
+    internal/mcp/           Tool-call HTTP server (GET /tools, POST /tools/call)
+    internal/tools/         jira.go, github.go, web.go, files.go, memory.go — one file per tool integration
 
 dashboard/
   src/App.jsx               Project Brain dashboard UI
   src/api.js                API wrapper for chat-agent routes
-  vite.config.js            Dev proxy from /api to localhost:8084
+  vite.config.js            Dev proxy from /api to localhost:8080
 
 extension/
   sidepanel.js              Chrome side panel UI logic
@@ -254,7 +254,7 @@ Compose, or the shell.
 | `OPENAI_MODEL` | empty | Model name for OpenAI-compatible chat |
 | `OPENAI_PROVIDER_LABEL` | `openai-compatible` | Name used in error messages |
 | `SQLITE_PATH` | `chat.db` | SQLite database path |
-| `PORT` | `8084` | FastAPI port |
+| `PORT` | `8080` | FastAPI port |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant URL |
@@ -311,9 +311,9 @@ docker compose up qdrant mcp-server -d
 ```
 
 `mcp-server` holds your Jira and GitHub credentials. `chat-agent` calls it for
-all PM tool operations. Do **not** use `docker compose up` without arguments —
-that also starts the unused legacy services (`policy-engine`, `gateway`,
-`agent-executor`) and a broken dashboard container.
+all PM tool operations. Starting only these two here — rather than the full
+`docker compose up` — leaves `chat-agent` and `dashboard` to run locally with
+hot reload (steps 2–3), which is faster for development.
 
 ### 2. Start chat-agent
 
@@ -322,7 +322,7 @@ cd services/chat-agent
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8084
+uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
 On macOS/Linux, activate the environment with:
@@ -344,7 +344,7 @@ Open `http://localhost:5173`.
 ### 4. Use the extension
 
 See [extension/README.md](extension/README.md). The extension talks directly to
-`http://localhost:8084`.
+`http://localhost:8080`.
 
 ## Running Tests
 
@@ -366,14 +366,10 @@ npm run lint
 
 - `mcp-server` (Go, port 8083) is an **active** dependency — `chat-agent` routes
   all Jira/GitHub calls through it. Always start it alongside Qdrant.
-- `policy-engine`, `gateway`, and `agent-executor` are legacy Go services. They
-  are kept in the repo but play no role in the current runtime. Do not start them.
-- `dashboard/vite.config.js` correctly proxies `/api` to `localhost:8084` for
-  development.
-- The `dashboard` Docker Compose service (port 3000) has a broken `nginx.conf`
-  that proxies `/api` to the legacy `agent-executor:8081`. **Do not use it.**
-  Always run the dashboard with `npm run dev` (port 5173) — that config is
-  correct and proxies `/api` to `chat-agent:8084`.
+- `dashboard/vite.config.js` proxies `/api` to `localhost:8080` for
+  development (`npm run dev`, port 5173). The `dashboard` Docker Compose
+  service's `nginx.conf` also proxies `/api` to `chat-agent:8080` on port
+  5173, so both paths work correctly.
 - The extension has UI support for retrying failed actions, but the FastAPI
   route `/actions/{action_id}/retry` is not currently implemented.
 - `briefing.py` attempts a best-effort RAG lookup with a vector-store interface
@@ -396,9 +392,10 @@ npm run lint
 
 ## Active Scope
 
-Project Brain is the active scope of this repository:
+Project Brain is the entire scope of this repository:
 
 - FastAPI chat-agent
+- Go mcp-server (Jira/GitHub API gateway)
 - SQLite project and memory storage
 - Qdrant RAG/vector memory
 - Ollama embeddings
@@ -406,7 +403,3 @@ Project Brain is the active scope of this repository:
 - Jira/GitHub sync and comment approval
 - React dashboard
 - Chrome extension
-
-The legacy Go execution-engine services remain in the repository for now, but
-new architecture, documentation, and assessment work should focus on the
-chat-agent stack.
