@@ -26,10 +26,11 @@ profile.cov
 
 # env file
 .env
-services/gateway/.env
-services/agent-executor/.env
 
-services/chat-agent/venv/
+*venv/
+*.venv/
+*.db
+*.log
 
 # Audit logs produced by the gateway at runtime
 *.jsonl
@@ -53,15 +54,10 @@ config/secrets.yml
 secrets/
 
 # Editor/IDE
-# .idea/
+.idea/
 # .vscode/
 .gitnexus
 
 docs/
 
-.claude/
-AGENTS.md
-CLAUDE.md
-PLAN.MD
-
-__pycache__/*
+**/__pycache__/

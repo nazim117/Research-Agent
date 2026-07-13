@@ -20,14 +20,10 @@ export const deleteProject = (id) => request('DELETE', `/projects/${id}`);
 export const chat = (projectId, sessionId, message) =>
   request('POST', '/chat', { project_id: projectId, session_id: sessionId, message });
 
-export const ingestText = (projectId, source, text) =>
-  request('POST', '/ingest', { project_id: projectId, source, text });
-
 export const memorySearch = (projectId, q, k = 5) =>
   request('GET', `/memory/search?project_id=${encodeURIComponent(projectId)}&q=${encodeURIComponent(q)}&k=${k}`);
 
 export const syncProject = (id) => request('POST', `/projects/${id}/sync`);
-export const getSyncStatus = (id) => request('GET', `/projects/${id}/sync`);
 
 export const listActions = (projectId, status) => {
   const qs = status ? `?status=${status}` : '';
@@ -42,11 +38,6 @@ export const ingestTranscript = (projectId, source, text) =>
 
 export const listDecisions = (projectId) =>
   request('GET', `/projects/${projectId}/decisions`);
-
-export const listActionItems = (projectId, status) => {
-  const qs = status ? `?status=${status}` : '';
-  return request('GET', `/projects/${projectId}/action-items${qs}`);
-};
 
 export const listRisks = (projectId) =>
   request('GET', `/projects/${projectId}/risks`);

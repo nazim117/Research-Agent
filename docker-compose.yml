@@ -1,35 +1,4 @@
 services:
-  # policy-engine:
-  #   build:
-  #     context: .
-  #     dockerfile: services/_docker/go-service.Dockerfile
-  #     args:
-  #       SERVICE: policy-engine
-  #   ports:
-  #     - "8080:8080"
-  #   environment:
-  #     - PORT=8080
-  #   restart: unless-stopped
-
-  # gateway:
-  #   build:
-  #     context: .
-  #     dockerfile: services/_docker/go-service.Dockerfile
-  #     args:
-  #       SERVICE: gateway
-  #   env_file:
-  #     - ./services/gateway/.env
-  #   ports:
-  #     - "8082:8082"
-  #   environment:
-  #     - PORT=8082
-  #     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-  #     - BLOCK_ON_PII=${BLOCK_ON_PII:-false}
-  #     - AUDIT_LOG_PATH=/var/log/gateway/audit.jsonl
-  #   volumes:
-  #     - gateway-audit:/var/log/gateway
-  #   restart: unless-stopped
-
   mcp-server:
     build:
       context: ./services/mcp-server
@@ -43,35 +12,7 @@ services:
     environment:
       - PORT=8083
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
-      # OpenTelemetry: export spans to Jaeger over OTLP/HTTP.
-      # "jaeger" resolves to the Jaeger container on the shared network.
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
-      - OTEL_SERVICE_NAME=mcp-server
-    depends_on:
-      - jaeger
     restart: unless-stopped
-
-  # agent-executor:
-  #   build:
-  #     context: .
-  #     dockerfile: services/_docker/go-service.Dockerfile
-  #     args:
-  #       SERVICE: agent-executor
-  #   env_file:
-  #     - ./services/gateway/.env
-  #   ports:
-  #     - "8081:8081"
-  #   environment:
-  #     - PORT=8081
-  #     - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-  #     - POLICY_ENGINE_URL=http://policy-engine:8080
-  #     - GATEWAY_URL=http://gateway:8082
-  #     - MCP_SERVER_URL=http://mcp-server:8083
-  #   depends_on:
-  #     - policy-engine
-  #     - gateway
-  #     - mcp-server
-  #   restart: unless-stopped
 
   dashboard:
     build: ./dashboard
@@ -81,15 +22,15 @@ services:
     #   - agent-executor
 
   # chat-agent — personal AI agent service (Steps 1–4 of the build plan).
-  # Runs on port 8084; persists conversation history in a named Docker volume.
+  # Runs on port 8080; persists conversation history in a named Docker volume.
   chat-agent:
     build: ./services/chat-agent
     ports:
-      - "8084:8084"
+      - "8080:8080"
     env_file:
       - .env
     environment:
-      - PORT=8084
+      - PORT=8080
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
       # Store the SQLite file in the mounted volume so it survives restarts.
@@ -103,70 +44,11 @@ services:
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       # PM I/O is routed through the mcp-server; chat-agent holds no vendor creds.
       - MCP_BASE_URL=http://mcp-server:8083
-      # OpenTelemetry: export spans to Jaeger over OTLP/HTTP.
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
-      - OTEL_SERVICE_NAME=chat-agent
     volumes:
       - chat-db:/data
     depends_on:
       - qdrant
       - mcp-server
-      - jaeger
-    restart: unless-stopped
-
-  # prometheus — metrics scraper and time-series storage.
-  #
-  # Scrapes /metrics from chat-agent (port 8084) and mcp-server (port 8083)
-  # every 15 seconds.  Config is mounted read-only from monitoring/prometheus/.
-  # The web UI / API on port 9090 lets you run ad-hoc PromQL queries.
-  prometheus:
-    image: prom/prometheus:v2.55.1
-    ports:
-      - "9090:9090"   # Prometheus web UI + API
-    volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    restart: unless-stopped
-
-  # grafana — metrics dashboard.
-  #
-  # Connects to Prometheus as a datasource (auto-provisioned on first boot).
-  # The "Project Brain" dashboard is pre-provisioned from monitoring/grafana/.
-  # Port 3001 because 3000 is already mapped by the legacy dashboard service.
-  # Anonymous admin access enabled — this is a local-first solo tool.
-  #   http://localhost:3001
-  grafana:
-    image: grafana/grafana:11.4.0
-    ports:
-      - "3001:3000"   # Grafana web UI
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-    volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - grafana-data:/var/lib/grafana
-    depends_on:
-      - prometheus
-    restart: unless-stopped
-
-  # jaeger — distributed tracing backend (local-first, all-in-one image).
-  #
-  # Receives spans from chat-agent and mcp-server over OTLP/HTTP on port 4318.
-  # The web UI on port 16686 lets you view full request waterfalls:
-  #   http://localhost:16686
-  #
-  # "all-in-one" bundles the collector, query service, and UI in one container —
-  # exactly what we need for a local dev/solo setup.  No separate collector or
-  # storage backend required.
-  jaeger:
-    image: jaegertracing/all-in-one:1.62.0
-    ports:
-      - "16686:16686"   # Jaeger web UI
-      - "4318:4318"     # OTLP/HTTP ingest (what the services export to)
-    environment:
-      # Required to enable the OTLP receiver in Jaeger all-in-one.
-      - COLLECTOR_OTLP_ENABLED=true
     restart: unless-stopped
 
   # qdrant — vector database for semantic memory (Step 2+).
@@ -181,17 +63,12 @@ services:
     restart: unless-stopped
 
 volumes:
-  gateway-audit:
   # Persists the SQLite database across container restarts.
   chat-db:
   # Persists Qdrant vector index across container restarts.
   qdrant-data:
-  # Persists Prometheus time-series data across restarts.
-  prometheus-data:
-  # Persists Grafana dashboards and user settings across restarts.
-  grafana-data:
 
 networks:
   default:
-    name: cost-aware-ai-net
+    name: research-ai-net
     driver: bridge

@@ -1,8 +1,5 @@
 go 1.25.2
 
 use (
-	./services/agent-executor
-	./services/gateway
 	./services/mcp-server
-	./services/policy-engine
 )
