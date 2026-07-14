@@ -1,6 +1,6 @@
-# Project Brain - Local-first AI Project Memory Assistant
+# Research Agent - Local-first AI Project Memory Assistant
 
-Project Brain is a local-first AI assistant for project managers and knowledge
+Research Agent is a local-first AI assistant for project managers and knowledge
 workers. It keeps project-scoped memory, ingests documents and meeting
 transcripts, retrieves relevant context with RAG, and can sync Jira/GitHub work
 items into a private project knowledge base.
@@ -9,7 +9,7 @@ The current active architecture is centered on the FastAPI `chat-agent`
 service, backed by the Go `mcp-server` for all Jira/GitHub API calls. The
 original "cost-aware AI agent execution engine" that this repository started
 as (`agent-executor`, `policy-engine`, `gateway`) has been removed; it is not
-part of the active Project Brain runtime.
+part of the active Research Agent runtime.
 
 ## What It Does
 
@@ -45,7 +45,7 @@ flowchart LR
 
 ### Active Containers
 
-These are the only services needed to run Project Brain:
+These are the only services needed to run Research Agent:
 
 | Container | Path | Responsibility |
 |---|---|---|
@@ -84,7 +84,7 @@ services/
     internal/tools/         jira.go, github.go, web.go, files.go, memory.go — one file per tool integration
 
 dashboard/
-  src/App.jsx               Project Brain dashboard UI
+  src/App.jsx               Research Agent dashboard UI
   src/api.js                API wrapper for chat-agent routes
   vite.config.js            Dev proxy from /api to localhost:8080
 
@@ -97,7 +97,7 @@ extension/
 
 ## Data and Storage Model
 
-Project Brain uses a single SQLite database plus two Qdrant collections.
+Research Agent uses a single SQLite database plus two Qdrant collections.
 
 SQLite tables:
 
@@ -392,7 +392,7 @@ npm run lint
 
 ## Active Scope
 
-Project Brain is the entire scope of this repository:
+Research Agent is the entire scope of this repository:
 
 - FastAPI chat-agent
 - Go mcp-server (Jira/GitHub API gateway)

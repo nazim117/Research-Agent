@@ -1,6 +1,6 @@
 openapi: "3.0.3"
 info:
-  title: chat-agent
+  title: research-agent
   version: "1.0.0"
   description: Local-first project-brain assistant API.
 

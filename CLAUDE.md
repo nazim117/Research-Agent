@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**Project Brain** — a local-first AI assistant for project managers. It keeps
+**Research Agent** — a local-first AI assistant for project managers. It keeps
 project-scoped memory, ingests documents/transcripts, retrieves context with
 RAG, and syncs Jira/GitHub work items into a private per-project knowledge
 base. The repo name ("Cost-aware AI Agent execution engine") reflects an

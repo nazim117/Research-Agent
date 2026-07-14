@@ -1,4 +1,4 @@
-// sidepanel.js — UI logic for the Project Brain side panel.
+// sidepanel.js — UI logic for the Research Agent side panel.
 //
 // This script runs in the side panel's own page context (not in a tab, not in
 // the background worker).  It can use:

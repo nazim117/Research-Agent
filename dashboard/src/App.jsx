@@ -126,7 +126,7 @@ function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditInteg
   return (
     <header className="topbar">
       <span className="topbar-logo">🧠</span>
-      <span className="topbar-title">Project Brain</span>
+      <span className="topbar-title">Research Agent</span>
 
       <select
         className="project-select"
