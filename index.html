@@ -1,17 +1,387 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
-    <title>research-agent API</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Research Agent — Local-first AI Project Memory Assistant</title>
+    <meta
+      name="description"
+      content="Research Agent is a local-first AI assistant for project managers. Download the latest release."
+    />
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --bg-elevated: #111820;
+        --border: #232b35;
+        --text: #e6edf3;
+        --text-muted: #9aa7b2;
+        --accent: #4f9dff;
+        --accent-text: #05121f;
+        --radius: 10px;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #ffffff;
+          --bg-elevated: #f6f8fa;
+          --border: #e2e8f0;
+          --text: #1a2027;
+          --text-muted: #5b6672;
+          --accent: #2563eb;
+          --accent-text: #ffffff;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        line-height: 1.5;
+      }
+      a {
+        color: var(--accent);
+      }
+      .wrap {
+        max-width: 880px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      nav {
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        border-bottom: 1px solid var(--border);
+        z-index: 10;
+      }
+      nav .wrap {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-top: 14px;
+        padding-bottom: 14px;
+      }
+      nav .brand {
+        font-weight: 700;
+        text-decoration: none;
+        color: var(--text);
+      }
+      nav .links {
+        display: flex;
+        gap: 20px;
+      }
+      nav .links a {
+        color: var(--text-muted);
+        text-decoration: none;
+        font-size: 14px;
+      }
+      nav .links a:hover {
+        color: var(--text);
+      }
+      header.hero {
+        padding: 64px 0 40px;
+        text-align: center;
+      }
+      header.hero h1 {
+        font-size: 2.4rem;
+        margin: 0 0 16px;
+      }
+      header.hero p {
+        color: var(--text-muted);
+        max-width: 620px;
+        margin: 0 auto 28px;
+        font-size: 1.05rem;
+      }
+      .cta-row {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .btn {
+        display: inline-block;
+        padding: 11px 22px;
+        border-radius: var(--radius);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 0.95rem;
+        border: 1px solid var(--border);
+      }
+      .btn-primary {
+        background: var(--accent);
+        color: var(--accent-text);
+        border-color: var(--accent);
+      }
+      .btn-secondary {
+        color: var(--text);
+      }
+      section {
+        padding: 40px 0;
+        border-top: 1px solid var(--border);
+      }
+      section h2 {
+        font-size: 1.3rem;
+        margin-bottom: 20px;
+      }
+      .screenshot-placeholder {
+        border: 1px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 60px 20px;
+        text-align: center;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+      }
+      .card {
+        background: var(--bg-elevated);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 24px;
+      }
+      .release-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        align-items: baseline;
+        margin-bottom: 12px;
+      }
+      .release-meta .tag {
+        font-weight: 700;
+        font-size: 1.1rem;
+      }
+      .release-meta .date {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+      }
+      .release-body {
+        color: var(--text-muted);
+        white-space: pre-wrap;
+        font-size: 0.92rem;
+        margin: 12px 0 20px;
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      .asset-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .asset-list li {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      .asset-list .name {
+        font-size: 0.92rem;
+        word-break: break-all;
+      }
+      .asset-list .size {
+        color: var(--text-muted);
+        font-size: 0.82rem;
+        white-space: nowrap;
+      }
+      .release-state {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+      }
+      .release-state.error a {
+        margin-left: 4px;
+      }
+      ul.features {
+        margin: 0;
+        padding-left: 20px;
+        color: var(--text-muted);
+      }
+      ul.features li {
+        margin-bottom: 8px;
+      }
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 28px 0 40px;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      footer .links {
+        display: flex;
+        gap: 16px;
+      }
+      footer a {
+        color: var(--text-muted);
+      }
+      footer a:hover {
+        color: var(--text);
+      }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
-    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+    <nav>
+      <div class="wrap">
+        <a class="brand" href="./">Research Agent</a>
+        <div class="links">
+          <a href="#download">Download</a>
+          <a href="./api/">API Docs</a>
+          <a href="https://github.com/nazim117/Research-Agent">GitHub</a>
+          <a href="https://github.com/nazim117/Research-Agent/releases">Releases</a>
+        </div>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <div class="wrap">
+        <h1>Research Agent</h1>
+        <p>
+          A local-first AI assistant for project managers and knowledge workers.
+          It keeps project-scoped memory, ingests documents and meeting
+          transcripts, retrieves relevant context with RAG, and syncs
+          Jira/GitHub work items into a private per-project knowledge base.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#download">Download latest</a>
+          <a class="btn btn-secondary" href="https://github.com/nazim117/Research-Agent">View source</a>
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <div class="wrap">
+        <!-- add screenshots/*.png and swap this placeholder for real <img> previews -->
+        <div class="screenshot-placeholder">Screenshots coming soon</div>
+      </div>
+    </section>
+
+    <section id="download">
+      <div class="wrap">
+        <h2>Latest release</h2>
+        <div class="card">
+          <div id="release-content">
+            <p class="release-state">Loading latest release&hellip;</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>What it does</h2>
+        <ul class="features">
+          <li>Creates isolated project workspaces with their own memory and sources</li>
+          <li>Stores conversation history in SQLite and semantic memory/document chunks in Qdrant</li>
+          <li>Uses Ollama for local embeddings, with Ollama or an OpenAI-compatible chat backend</li>
+          <li>Ingests pasted text, files, URLs, webpages, and transcripts</li>
+          <li>Extracts decisions, action items, and risks from meeting transcripts</li>
+          <li>Syncs Jira issues and GitHub issues/PRs into project RAG memory</li>
+          <li>Lets the assistant draft Jira/GitHub comments for human approval</li>
+          <li>Ships with a React dashboard and a Chrome side-panel extension</li>
+        </ul>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap" style="display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; width: 100%;">
+        <span>MIT licensed</span>
+        <div class="links">
+          <a href="https://github.com/nazim117/Research-Agent#readme">README</a>
+          <a href="./api/">API Docs</a>
+          <a href="https://github.com/nazim117/Research-Agent/issues">Issues</a>
+        </div>
+      </div>
+    </footer>
+
     <script>
-      Scalar.createApiReference('#app', {
-        url: './openapi.yaml',
-      })
+      const REPO = "nazim117/Research-Agent";
+
+      function formatBytes(bytes) {
+        if (!bytes) return "";
+        const units = ["B", "KB", "MB", "GB"];
+        let i = 0;
+        let n = bytes;
+        while (n >= 1024 && i < units.length - 1) {
+          n /= 1024;
+          i++;
+        }
+        return `${n.toFixed(n < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
+      }
+
+      function formatDate(iso) {
+        return new Date(iso).toLocaleDateString(undefined, {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        });
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      function renderRelease(release) {
+        const container = document.getElementById("release-content");
+        const tag = release.tag_name || release.name || "latest";
+        const publishedAt = release.published_at ? formatDate(release.published_at) : "";
+        const notes = release.body ? escapeHtml(release.body) : "No release notes provided.";
+
+        let assetsHtml;
+        if (release.assets && release.assets.length > 0) {
+          assetsHtml = `<ul class="asset-list">${release.assets
+            .map(
+              (asset) => `
+                <li>
+                  <span class="name">${escapeHtml(asset.name)}</span>
+                  <span class="size">${formatBytes(asset.size)}</span>
+                  <a class="btn btn-secondary" href="${asset.browser_download_url}">Download</a>
+                </li>`
+            )
+            .join("")}</ul>`;
+        } else {
+          assetsHtml = `<ul class="asset-list">
+            <li>
+              <span class="name">Source code (zip)</span>
+              <span class="size"></span>
+              <a class="btn btn-secondary" href="${release.zipball_url}">Download</a>
+            </li>
+          </ul>`;
+        }
+
+        container.innerHTML = `
+          <div class="release-meta">
+            <span class="tag">${escapeHtml(tag)}</span>
+            <span class="date">${publishedAt}</span>
+          </div>
+          <div class="release-body">${notes}</div>
+          ${assetsHtml}
+        `;
+      }
+
+      function renderError() {
+        const container = document.getElementById("release-content");
+        container.innerHTML = `
+          <p class="release-state error">
+            Couldn't reach GitHub to load the latest release.
+            <a href="https://github.com/${REPO}/releases/latest">View releases directly &rarr;</a>
+          </p>
+        `;
+      }
+
+      fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
+          return res.json();
+        })
+        .then(renderRelease)
+        .catch(renderError);
     </script>
   </body>
 </html>
