@@ -38,6 +38,7 @@ import httpx
 
 from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, validate_payload
 from config import settings
+from document_state import DocumentStateStore
 from embeddings import embed
 from mcp_client import MCPClient, MCPError
 from llm import chat, validate_llm_config
@@ -63,6 +64,7 @@ vstore = VectorStore(url=settings.qdrant_url)
 sync_store = SyncStore(settings.sqlite_path)
 action_store = ActionStore(settings.sqlite_path)
 transcript_store = TranscriptStore(settings.sqlite_path)
+document_state_store = DocumentStateStore(settings.sqlite_path)
 
 # Shared MCPClient — the single gateway to all PM vendor APIs.
 # Credentials (JIRA_*, GITHUB_TOKEN) live on the mcp-server; this service
@@ -138,10 +140,11 @@ async def lifespan(app: FastAPI):
         await vstore.ensure_collection(settings.qdrant_collection, dim=EMBED_DIM)
         await vstore.ensure_collection(settings.qdrant_docs_collection, dim=EMBED_DIM)
 
-    # SyncStore and TranscriptStore tables are always safe to create — no
-    # schema coupling to the version wipe above.
+    # SyncStore, TranscriptStore, and DocumentStateStore tables are always
+    # safe to create — no schema coupling to the version wipe above.
     await sync_store.init()
     await transcript_store.init()
+    await document_state_store.init()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -252,6 +255,11 @@ class ChatResponse(BaseModel):
     citations: list[Citation] = []  # Chunks the reply may have drawn from.
 
 
+class HistoryMessageOut(BaseModel):
+    role: str     # "user" or "assistant".
+    content: str  # The message text (citations are not persisted).
+
+
 class IngestRequest(BaseModel):
     project_id: str  # Which project brain to add this document to.
     source: str  # A label for the document — filename, URL, or any identifier.
@@ -339,8 +347,13 @@ class StandupOut(BaseModel):
 
 
 class SourceOut(BaseModel):
-    source: str   # Label supplied at ingest time (e.g. "notes.md", "jira:KAN-1").
-    chunks: int   # Number of Qdrant points stored under this source label.
+    source: str    # Label supplied at ingest time (e.g. "notes.md", "jira:KAN-1").
+    chunks: int    # Number of Qdrant points stored under this source label.
+    enabled: bool  # Whether this source is included in RAG retrieval.
+
+
+class SetSourceEnabledRequest(BaseModel):
+    enabled: bool
 
 
 class MemoryHit(BaseModel):
@@ -463,6 +476,7 @@ async def delete_project(project_id: str):
     # sync_store already deleted the same rows — the second DELETE is a no-op.
     await action_store.delete_by_project(project_id)
     await transcript_store.delete_by_project(project_id)
+    await document_state_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -887,8 +901,45 @@ async def get_standup(project_id: str) -> StandupOut:
 async def list_sources(project_id: str) -> list[SourceOut]:
     """Return distinct ingested sources for a project with their chunk counts."""
     await _require_project(project_id)
-    summaries = await rag.list_sources(project_id=project_id, vstore=vstore)
-    return [SourceOut(source=s.source, chunks=s.chunks) for s in summaries]
+    enabled_map = await document_state_store.get_enabled_map(project_id)
+    summaries = await rag.list_sources(
+        project_id=project_id, vstore=vstore, enabled_map=enabled_map
+    )
+    return [
+        SourceOut(source=s.source, chunks=s.chunks, enabled=s.enabled)
+        for s in summaries
+    ]
+
+
+@app.patch("/projects/{project_id}/sources/{source}")
+async def set_source_enabled(
+    project_id: str, source: str, req: SetSourceEnabledRequest
+):
+    """Toggle whether a document is included in RAG retrieval.
+
+    Disabling a source keeps its chunks in Qdrant but excludes it from
+    /chat retrieval — use DELETE to remove a document permanently instead.
+    """
+    await _require_project(project_id)
+    await document_state_store.set_enabled(project_id, source, req.enabled)
+    return {"source": source, "enabled": req.enabled}
+
+
+@app.delete("/projects/{project_id}/sources/{source}")
+async def delete_source(project_id: str, source: str):
+    """Permanently delete one ingested document.
+
+    Cascade:
+      - Qdrant:  all chunks tagged with this project_id + source
+      - SQLite:  any transcript-derived decisions/action_items/risks for
+                 this source, and any stored enabled/disabled state
+    """
+    await _require_project(project_id)
+    await vstore.delete_by_source(settings.qdrant_docs_collection, project_id, source)
+    await transcript_store.delete_by_source(project_id, source)
+    await document_state_store.delete_by_source(project_id, source)
+    logger.info("Deleted source %r from project %s", source, project_id)
+    return {"deleted": True}
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -929,9 +980,12 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     )
 
     # 3b. Search documents collection for relevant chunks (RAG), same filter.
+    #     Documents the user has toggled off are excluded from retrieval.
+    _disabled_sources = await document_state_store.get_disabled_sources(req.project_id)
     doc_chunks = await rag.retrieve(
         req.project_id, req.message, k=3, vstore=vstore,
         score_threshold=settings.rag_score_threshold,
+        exclude_sources=_disabled_sources,
     )
 
     # 3c. If the message explicitly names ticket keys (e.g. "KAN-8", "#42"),
@@ -946,6 +1000,8 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     )
     _seen_sources = {c.source for c in doc_chunks}
     for _src in _pinned_sources:
+        if _src in _disabled_sources:
+            continue
         if _src not in _seen_sources:
             _pinned = await rag.retrieve_by_source(req.project_id, _src, vstore=vstore)
             if _pinned:
@@ -1172,6 +1228,24 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
 
     # 9. Return.
     return ChatResponse(reply=reply, citations=citations)
+
+
+@app.get("/projects/{project_id}/history", response_model=list[HistoryMessageOut])
+async def get_history(
+    project_id: str,
+    session_id: str = Query("default", description="Which conversation within the project."),
+    limit: int = Query(100, description="Max messages to return, oldest first."),
+) -> list[HistoryMessageOut]:
+    """Return persisted chat history for (project_id, session_id), oldest first.
+
+    Lets the dashboard restore the conversation on page load instead of
+    starting blank — messages are already durably stored in SQLite by
+    /chat (store.append), this just exposes them for reading. Citations are
+    not persisted, so replayed assistant messages won't show their sources.
+    """
+    await _require_project(project_id)
+    rows = await store.history(project_id, session_id, limit=limit)
+    return [HistoryMessageOut(role=r["role"], content=r["content"]) for r in rows]
 
 
 @app.get("/memory/search", response_model=list[MemoryHit])

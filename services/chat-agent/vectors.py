@@ -42,6 +42,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    MatchAny,
     MatchValue,
     PayloadSchemaType,
     PointStruct,
@@ -196,6 +197,7 @@ class VectorStore:
         vector: list[float],
         k: int = 5,
         score_threshold: float | None = None,
+        exclude_sources: list[str] | None = None,
     ) -> list[Hit]:
         """Find the k most similar vectors within one project.
 
@@ -209,10 +211,20 @@ class VectorStore:
                               returned.  None (default) means no cutoff — the
                               k nearest points are returned regardless of how
                               similar they actually are.
+            exclude_sources: Source labels to exclude (e.g. documents a user
+                              has disabled). None/empty means no exclusion.
 
         Returns:
             List of Hit objects ordered by score descending (most similar first).
         """
+        query_filter = _project_filter(project_id)
+        if exclude_sources:
+            query_filter = Filter(
+                must=query_filter.must,
+                must_not=[
+                    FieldCondition(key="source", match=MatchAny(any=exclude_sources))
+                ],
+            )
         try:
             results = await self._client.search(
                 collection_name=collection,
@@ -222,7 +234,7 @@ class VectorStore:
                 score_threshold=score_threshold,
                 # The filter is the whole point of this method:
                 # Qdrant will only consider points where project_id matches.
-                query_filter=_project_filter(project_id),
+                query_filter=query_filter,
             )
         except Exception as exc:
             raise HTTPException(

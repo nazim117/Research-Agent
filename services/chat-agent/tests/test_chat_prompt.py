@@ -51,11 +51,11 @@ async def _fake_embed(_text: str) -> list[float]:
     return FAKE_EMBED_VEC
 
 
-async def _fake_retrieve(_project_id, _query, k, vstore, score_threshold=None):
+async def _fake_retrieve(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None):
     return [_make_chunk()]
 
 
-async def _fake_retrieve_empty(_project_id, _query, k, vstore, score_threshold=None):
+async def _fake_retrieve_empty(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None):
     return []
 
 
@@ -81,6 +81,7 @@ async def test_doc_chunk_produces_project_knowledge_block():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -129,6 +130,7 @@ async def test_no_doc_chunks_no_knowledge_block():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -164,6 +166,7 @@ async def test_prior_refusals_stripped_from_recent_history():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -210,6 +213,7 @@ async def test_draft_action_tag_replaced_with_marker():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         # Provide a project with a jira ref so the TOOLS block is injected and
         # action_store.create_pending is reachable via the real in-memory store.
         patch("main.project_store.get", new_callable=AsyncMock, return_value=MagicMock(
@@ -254,6 +258,7 @@ async def test_malformed_draft_action_tag_stripped_silently():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.project_store.get", new_callable=AsyncMock, return_value=MagicMock(
             id=FAKE_PROJECT_ID,
             external_refs={"jira_project_key": "KAN"},
@@ -291,6 +296,7 @@ async def test_source_label_in_prompt():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -324,6 +330,7 @@ async def test_one_chunk_produces_citations_array():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -358,6 +365,7 @@ async def test_no_chunks_produces_empty_citations():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -379,7 +387,7 @@ async def test_two_chunks_produce_ordered_citations():
     chunk_a = Chunk(score=0.9, source="jira:KAN-1", chunk_index=0, text="First chunk content")
     chunk_b = Chunk(score=0.8, source="notes.md", chunk_index=2, text="Second chunk content")
 
-    async def _retrieve_two(_project_id, _query, k, vstore, score_threshold=None):
+    async def _retrieve_two(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None):
         return [chunk_a, chunk_b]
 
     captured_messages = []
@@ -397,6 +405,7 @@ async def test_two_chunks_produce_ordered_citations():
         patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

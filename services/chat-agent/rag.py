@@ -45,6 +45,7 @@ class SourceSummary:
     """Distinct source label with chunk count — returned by list_sources."""
     source: str
     chunks: int
+    enabled: bool = True
 
 
 @dataclass
@@ -135,11 +136,17 @@ async def ingest(
 async def list_sources(
     project_id: str,
     vstore: VectorStore,
+    enabled_map: dict[str, bool] | None = None,
 ) -> list[SourceSummary]:
     """Return distinct sources ingested into a project, with their chunk counts.
 
     Scrolls the documents collection without a query vector, so no embedding
     cost. Aggregates by payload.source — the label supplied at ingest time.
+
+    Args:
+        enabled_map: {source: enabled} from DocumentStateStore.get_enabled_map.
+                     A source missing from this map is treated as enabled —
+                     that's the default for anything never toggled off.
     """
     payloads = await vstore.scroll_payloads(
         collection=settings.qdrant_docs_collection,
@@ -149,7 +156,11 @@ async def list_sources(
     for p in payloads:
         src = p.get("source", "")
         counts[src] = counts.get(src, 0) + 1
-    return [SourceSummary(source=s, chunks=c) for s, c in sorted(counts.items())]
+    enabled_map = enabled_map or {}
+    return [
+        SourceSummary(source=s, chunks=c, enabled=enabled_map.get(s, True))
+        for s, c in sorted(counts.items())
+    ]
 
 
 async def retrieve_by_source(
@@ -184,6 +195,7 @@ async def retrieve(
     k: int,
     vstore: VectorStore,
     score_threshold: float | None = None,
+    exclude_sources: set[str] | None = None,
 ) -> list[Chunk]:
     """Find the k document chunks most semantically similar to `query`,
     restricted to one project.
@@ -196,6 +208,8 @@ async def retrieve(
         vstore:          The VectorStore instance to search.
         score_threshold: Minimum cosine similarity a chunk must have to be
                           returned.  None (default) means no cutoff.
+        exclude_sources: Source labels to omit from results — used to keep
+                          documents a user has disabled out of chat answers.
 
     Returns:
         List of Chunk objects ordered by score descending (most relevant first).
@@ -207,6 +221,7 @@ async def retrieve(
         vector=query_vec,
         k=k,
         score_threshold=score_threshold,
+        exclude_sources=list(exclude_sources) if exclude_sources else None,
     )
 
     # Map VectorStore Hit objects to Chunk objects using the raw payload dict.
