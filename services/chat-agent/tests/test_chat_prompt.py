@@ -51,11 +51,11 @@ async def _fake_embed(_text: str) -> list[float]:
     return FAKE_EMBED_VEC
 
 
-async def _fake_retrieve(_project_id, _query, k, vstore):
+async def _fake_retrieve(_project_id, _query, k, vstore, score_threshold=None):
     return [_make_chunk()]
 
 
-async def _fake_retrieve_empty(_project_id, _query, k, vstore):
+async def _fake_retrieve_empty(_project_id, _query, k, vstore, score_threshold=None):
     return []
 
 
@@ -379,7 +379,7 @@ async def test_two_chunks_produce_ordered_citations():
     chunk_a = Chunk(score=0.9, source="jira:KAN-1", chunk_index=0, text="First chunk content")
     chunk_b = Chunk(score=0.8, source="notes.md", chunk_index=2, text="Second chunk content")
 
-    async def _retrieve_two(_project_id, _query, k, vstore):
+    async def _retrieve_two(_project_id, _query, k, vstore, score_threshold=None):
         return [chunk_a, chunk_b]
 
     captured_messages = []

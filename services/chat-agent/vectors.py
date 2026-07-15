@@ -195,15 +195,20 @@ class VectorStore:
         project_id: str,
         vector: list[float],
         k: int = 5,
+        score_threshold: float | None = None,
     ) -> list[Hit]:
         """Find the k most similar vectors within one project.
 
         Args:
-            collection: Collection to search.
-            project_id: Partition to restrict the search to.  Points tagged
-                        with any other project_id are invisible.
-            vector:     The query embedding (same dimension as stored vectors).
-            k:          Number of results to return.
+            collection:      Collection to search.
+            project_id:      Partition to restrict the search to.  Points
+                              tagged with any other project_id are invisible.
+            vector:          The query embedding (same dimension as stored vectors).
+            k:               Number of results to return.
+            score_threshold: Minimum cosine similarity a point must have to be
+                              returned.  None (default) means no cutoff — the
+                              k nearest points are returned regardless of how
+                              similar they actually are.
 
         Returns:
             List of Hit objects ordered by score descending (most similar first).
@@ -214,6 +219,7 @@ class VectorStore:
                 query_vector=vector,
                 limit=k,
                 with_payload=True,   # include the stored payload in results
+                score_threshold=score_threshold,
                 # The filter is the whole point of this method:
                 # Qdrant will only consider points where project_id matches.
                 query_filter=_project_filter(project_id),

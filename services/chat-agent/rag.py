@@ -183,16 +183,19 @@ async def retrieve(
     query: str,
     k: int,
     vstore: VectorStore,
+    score_threshold: float | None = None,
 ) -> list[Chunk]:
     """Find the k document chunks most semantically similar to `query`,
     restricted to one project.
 
     Args:
-        project_id: Only chunks tagged with this id are considered.  Chunks
-                    from other projects are invisible.
-        query:      The search string — usually the user's current message.
-        k:          How many chunks to return.
-        vstore:     The VectorStore instance to search.
+        project_id:      Only chunks tagged with this id are considered.
+                          Chunks from other projects are invisible.
+        query:           The search string — usually the user's current message.
+        k:               How many chunks to return.
+        vstore:          The VectorStore instance to search.
+        score_threshold: Minimum cosine similarity a chunk must have to be
+                          returned.  None (default) means no cutoff.
 
     Returns:
         List of Chunk objects ordered by score descending (most relevant first).
@@ -203,6 +206,7 @@ async def retrieve(
         project_id=project_id,
         vector=query_vec,
         k=k,
+        score_threshold=score_threshold,
     )
 
     # Map VectorStore Hit objects to Chunk objects using the raw payload dict.

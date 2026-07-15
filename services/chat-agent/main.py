@@ -925,10 +925,14 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
         project_id=req.project_id,
         vector=query_vec,
         k=settings.memory_search_k,
+        score_threshold=settings.memory_score_threshold,
     )
 
     # 3b. Search documents collection for relevant chunks (RAG), same filter.
-    doc_chunks = await rag.retrieve(req.project_id, req.message, k=3, vstore=vstore)
+    doc_chunks = await rag.retrieve(
+        req.project_id, req.message, k=3, vstore=vstore,
+        score_threshold=settings.rag_score_threshold,
+    )
 
     # 3c. If the message explicitly names ticket keys (e.g. "KAN-8", "#42"),
     # fetch those chunks by exact source label and prepend them.  Semantic

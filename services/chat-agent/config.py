@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # These are injected into the prompt as extra context for the LLM.
     memory_search_k: int = 5
 
+    # Minimum cosine similarity for a document chunk to be injected into the
+    # prompt. Below ~0.5 the docstring in vectors.py calls a match "unrelated" —
+    # use that as the default cutoff so off-topic queries don't drag in
+    # irrelevant chunks (e.g. "what is your name" pulling in Welcome.md at score 0).
+    rag_score_threshold: float = 0.5
+
+    # Same idea for conversation memory hits.
+    memory_score_threshold: float = 0.5
+
     # MCP server — internal tool gateway.
     # The mcp-server (services/mcp-server, port 8083) proxies all PM vendor
     # API calls.  It holds JIRA_* and GITHUB_TOKEN; the chat-agent never reads
