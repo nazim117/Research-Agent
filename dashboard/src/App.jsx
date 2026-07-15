@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import * as api from './api.js';
+import {
+  IconX, IconSettings, IconRefresh, IconUpload, IconLoader,
+  IconSearch, IconBook, IconUser, IconBot, IconClipboard, IconSun, IconEdit, IconCheck, IconAlert,
+} from './icons.jsx';
 
 // ─── Toast ────────────────────────────────────────────────────────────────
 
@@ -18,7 +22,9 @@ function Toast({ message, url, onDismiss }) {
           open ↗
         </a>
       )}
-      <button className="toast-close" onClick={onDismiss}>✕</button>
+      <button className="toast-close" onClick={onDismiss} aria-label="Dismiss notification">
+        <IconX />
+      </button>
     </div>
   );
 }
@@ -46,8 +52,12 @@ function IntegrationModal({ project, onSave, onClose }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <span className="modal-title">⚙ Integrations — {project?.name}</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <span className="modal-title">
+            <IconSettings /> Integrations — {project?.name}
+          </span>
+          <button className="modal-close" onClick={onClose} aria-label="Close dialog">
+            <IconX />
+          </button>
         </div>
         <div className="modal-body">
           <div className="edit-label">External refs</div>
@@ -65,7 +75,7 @@ function IntegrationModal({ project, onSave, onClose }) {
             onChange={e => setRefs(r => ({ ...r, github_repo: e.target.value }))}
             placeholder="e.g. org/repo"
           />
-          <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
+          <div className="row-gap-sm mt-12">
             <button className="btn btn-primary btn-sm" onClick={handleSave}>Save</button>
             <button className="btn btn-secondary btn-sm" onClick={onClose}>Cancel</button>
           </div>
@@ -125,7 +135,7 @@ function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditInteg
 
   return (
     <header className="topbar">
-      <span className="topbar-logo">🧠</span>
+      <span className="topbar-logo" aria-hidden="true"><IconBot /></span>
       <span className="topbar-title">Research Agent</span>
 
       <select
@@ -142,15 +152,14 @@ function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditInteg
         ))}
         <option value="" disabled>──────</option>
         <option value="__new__">+ New project</option>
-        {activeId && <option value="__edit__">⚙ Edit integrations</option>}
-        {activeId && <option value="__delete__">🗑 Delete project</option>}
+        {activeId && <option value="__edit__">Edit integrations</option>}
+        {activeId && <option value="__delete__">Delete project</option>}
       </select>
 
       {showNewInput && (
-        <form onSubmit={handleCreate} style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+        <form onSubmit={handleCreate} className="row-gap-sm">
           <input
-            className="input"
-            style={{ width: '160px', fontSize: '12px', padding: '4px 8px' }}
+            className="input input-sm"
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="Project name…"
@@ -210,7 +219,7 @@ function DropZone({ busy, url, setUrl, onFile, onUrl }) {
 
   return (
     <div className="section">
-      <div className="section-title">↑ Add sources</div>
+      <div className="section-title"><IconUpload /> Add sources</div>
 
       <div
         className={`dropzone ${hover ? 'hover' : ''} ${busy ? 'busy' : ''}`}
@@ -224,9 +233,9 @@ function DropZone({ busy, url, setUrl, onFile, onUrl }) {
           type="file"
           accept={ALL_ACCEPT}
           onChange={handlePick}
-          style={{ display: 'none' }}
+          className="visually-hidden-input"
         />
-        <div className="dropzone-icon">{busy ? '⏳' : '⬆'}</div>
+        <div className="dropzone-icon">{busy ? <IconLoader className="spin" /> : <IconUpload />}</div>
         <div className="dropzone-text">
           {busy ? 'Processing…' : 'Click or drop file here'}
         </div>
@@ -237,11 +246,10 @@ function DropZone({ busy, url, setUrl, onFile, onUrl }) {
 
       <form
         onSubmit={e => { e.preventDefault(); onUrl(); }}
-        style={{ display: 'flex', gap: '6px', marginTop: '8px' }}
+        className="row-gap-sm mt-8"
       >
         <input
-          className="input"
-          style={{ flex: 1 }}
+          className="input flex-1"
           value={url}
           onChange={e => setUrl(e.target.value)}
           placeholder="…or paste URL"
@@ -357,7 +365,7 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
 
         <div className="section">
           <button className="btn btn-secondary btn-block" onClick={handleSync} disabled={syncing}>
-            {syncing ? 'Syncing…' : '⟳ Sync now'}
+            {syncing ? <><IconLoader className="spin" /> Syncing…</> : <><IconRefresh /> Sync now</>}
           </button>
         </div>
 
@@ -370,8 +378,8 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
         />
 
         <div className="section">
-          <div className="section-title">⌕ Memory Search</div>
-          <form onSubmit={handleSearch} style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+          <div className="section-title"><IconSearch /> Memory Search</div>
+          <form onSubmit={handleSearch} className="col-gap-sm">
             <input
               className="input"
               value={searchQ}
@@ -400,7 +408,7 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
         </div>
 
         <div className="section">
-          <div className="section-title" data-testid="sources-count">📚 Sources ({sources.length})</div>
+          <div className="section-title" data-testid="sources-count"><IconBook /> Sources ({sources.length})</div>
           {sources.length === 0 ? (
             <p className="no-data">No sources ingested yet.</p>
           ) : (
@@ -456,7 +464,7 @@ function ChatPane({ projectId, onActionDrafted }) {
   if (!projectId) {
     return (
       <div className="chat-pane chat-empty-state">
-        <div className="chat-empty-icon">🧠</div>
+        <div className="chat-empty-icon"><IconBot /></div>
         <div className="chat-empty-text">Select or create a project to start chatting.</div>
       </div>
     );
@@ -468,7 +476,7 @@ function ChatPane({ projectId, onActionDrafted }) {
         {messages.map((m, i) => (
           <div key={i} className={`message ${m.role === 'user' ? 'user' : ''}`}>
             <div className={`avatar ${m.role === 'user' ? 'user' : 'ai'}`}>
-              {m.role === 'user' ? '👤' : '🧠'}
+              {m.role === 'user' ? <IconUser /> : <IconBot />}
             </div>
             <div className={`bubble ${m.role === 'user' ? 'user' : 'ai'}`} data-testid={m.role === 'user' ? 'chat-message-user' : 'chat-message'}>
               <div className="prose">
@@ -492,7 +500,7 @@ function ChatPane({ projectId, onActionDrafted }) {
 
         {busy && (
           <div className="message">
-            <div className="avatar ai">🧠</div>
+            <div className="avatar ai"><IconBot /></div>
             <div className="typing-indicator">
               <div className="dot" />
               <div className="dot" />
@@ -529,7 +537,13 @@ function ChatPane({ projectId, onActionDrafted }) {
 
 // ─── Studio pane ───────────────────────────────────────────────────────────
 
-const STUDIO_TABS = ['📋 Briefing', '☀ Standup', '✎ Actions', '✓ Decisions', '⚠ Risks'];
+const STUDIO_TABS = [
+  { label: 'Briefing', Icon: IconClipboard },
+  { label: 'Standup', Icon: IconSun },
+  { label: 'Actions', Icon: IconEdit },
+  { label: 'Decisions', Icon: IconCheck },
+  { label: 'Risks', Icon: IconAlert },
+];
 
 function StudioPane({ projectId, actionsKey, setToast }) {
   const [tab, setTab] = useState(() => {
@@ -611,7 +625,9 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   return (
     <aside className="studio-pane">
       <div className="studio-tabs">
-        {STUDIO_TABS.map((label, i) => (
+        {STUDIO_TABS.map((tabInfo, i) => {
+          const { label, Icon } = tabInfo;
+          return (
           <button
             key={label}
             className={`studio-tab ${tab === i ? 'active' : ''}`}
@@ -622,12 +638,13 @@ function StudioPane({ projectId, actionsKey, setToast }) {
               if (i === 1 && !standup) loadStandup();
             }}
           >
-            {label}
+            <Icon /> {label}
             {i === 2 && actions.length > 0 && (
-              <span className="section-badge" style={{ marginLeft: '4px' }}>{actions.length}</span>
+              <span className="section-badge ml-4">{actions.length}</span>
             )}
           </button>
-        ))}
+          );
+        })}
       </div>
 
       <div className="studio-scroll">
@@ -683,8 +700,7 @@ function StudioPane({ projectId, actionsKey, setToast }) {
 
                 <div className="briefing-meta">Generated: {new Date(briefing.generated_at).toLocaleString()}</div>
                 <button
-                  className="btn btn-secondary btn-sm"
-                  style={{ marginTop: '12px' }}
+                  className="btn btn-secondary btn-sm mt-12"
                   onClick={() => { setBriefing(null); loadBriefing(); }}
                 >
                   Refresh
@@ -745,8 +761,7 @@ function StudioPane({ projectId, actionsKey, setToast }) {
 
                 <div className="briefing-meta">Generated: {new Date(standup.generated_at).toLocaleString()}</div>
                 <button
-                  className="btn btn-secondary btn-sm"
-                  style={{ marginTop: '12px' }}
+                  className="btn btn-secondary btn-sm mt-12"
                   onClick={() => { setStandup(null); loadStandup(); }}
                 >
                   Refresh

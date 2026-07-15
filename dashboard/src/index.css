@@ -1,20 +1,30 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('./palette.css');
 
 :root {
-  --bg-base:    #0d1117;
-  --bg-surface: #161b22;
-  --bg-raised:  #1c2128;
-  --bg-inset:   #010409;
+  /* Material-3-style neutral surfaces: panels are NOT color-coded against
+     each other (unlike the earlier blue-panel iteration) — hierarchy comes
+     from gap/elevation/radius instead, same as NotebookLM's Sources/Chat/
+     Studio columns. The brand palette (palette.css) is kept for --accent
+     only, used sparingly for focus rings, active states, and links —
+     never as a whole-panel fill. --bg-canvas is the page background that
+     shows through the gaps between floating panels. */
+  --bg-canvas:  #0a0b0d;
+  --bg-inset:   #0e0f12;
+  --bg-base:    #16181c;
+  --bg-surface: #1b1e23;
+  --bg-panel:   #16181c;
+  --bg-raised:  #22262b;
 
-  --border:        #30363d;
-  --border-subtle: #21262d;
+  --border:        rgba(255, 255, 255, 0.14);
+  --border-subtle: rgba(255, 255, 255, 0.07);
 
-  --text:    #e6edf3;
-  --text-2:  #8b949e;
-  --text-3:  #484f58;
+  --text:    #f3f4f6;
+  --text-2:  #a7adb6;
+  --text-3:  #6d737c;
 
-  --accent:        #58a6ff;
-  --accent-subtle: rgba(88, 166, 255, 0.1);
+  --accent:        var(--palette-frosted-blue);
+  --accent-subtle: rgba(166, 225, 250, 0.16);
   --green:         #3fb950;
   --green-subtle:  rgba(63, 185, 80, 0.08);
   --amber:         #d29922;
@@ -22,10 +32,11 @@
   --red:           #f85149;
   --red-subtle:    rgba(248, 81, 73, 0.08);
 
-  --r-sm: 4px;
-  --r:    6px;
-  --r-lg: 10px;
-  --r-xl: 14px;
+  --r-sm:   6px;
+  --r:      10px;
+  --r-lg:   16px;
+  --r-xl:   20px;
+  --r-pill: 999px;
 
   --t: 150ms ease;
 
@@ -41,7 +52,7 @@
 
 html, body, #root { height: 100%; overflow: hidden; }
 
-body { background: var(--bg-base); color: var(--text); }
+body { background: var(--bg-canvas); color: var(--text); }
 
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -67,7 +78,7 @@ body { background: var(--bg-base); color: var(--text); }
   grid-area: topbar;
   display: flex; align-items: center; gap: 10px;
   padding: 0 16px;
-  background: var(--bg-surface);
+  background: var(--bg-canvas);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
@@ -97,8 +108,10 @@ body { background: var(--bg-base); color: var(--text); }
 
 .left-pane {
   grid-area: left;
-  background: var(--bg-surface);
-  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  margin: 8px 4px 8px 8px;
   display: flex; flex-direction: column; overflow: hidden;
 }
 
@@ -172,8 +185,10 @@ body { background: var(--bg-base); color: var(--text); }
 
 .studio-pane {
   grid-area: studio;
-  background: var(--bg-surface);
-  border-left: 1px solid var(--border-subtle);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  margin: 8px 8px 8px 4px;
   display: flex; flex-direction: column; overflow: hidden;
 }
 
@@ -216,7 +231,7 @@ body { background: var(--bg-base); color: var(--text); }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 6px 14px; border-radius: var(--r);
+  padding: 7px 16px; border-radius: var(--r-pill);
   font-size: 12px; font-weight: 600; font-family: inherit;
   cursor: pointer; border: 1px solid transparent;
   transition: all var(--t); white-space: nowrap; outline: none;
@@ -241,6 +256,9 @@ body { background: var(--bg-base); color: var(--text); }
   grid-area: chat;
   display: flex; flex-direction: column;
   min-width: 0; background: var(--bg-base); overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  margin: 8px 4px;
 }
 
 .pane-header {
@@ -318,7 +336,7 @@ body { background: var(--bg-base); color: var(--text); }
 }
 
 .chat-textarea {
-  flex: 1; background: var(--bg-inset);
+  flex: 1; background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 10px; color: var(--text);
   padding: 9px 13px; font-size: 13px; font-family: inherit;
@@ -334,7 +352,7 @@ body { background: var(--bg-base); color: var(--text); }
 
 .send-btn {
   height: 42px; padding: 0 20px;
-  border-radius: 10px; font-size: 13px;
+  border-radius: var(--r-pill); font-size: 13px;
   font-weight: 600; flex-shrink: 0;
 }
 
@@ -384,7 +402,7 @@ body { background: var(--bg-base); color: var(--text); }
 
 .btn-approve {
   background: var(--green-subtle); border: 1px solid var(--green);
-  color: var(--green); padding: 4px 12px; border-radius: var(--r);
+  color: var(--green); padding: 4px 12px; border-radius: var(--r-pill);
   font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;
   transition: background var(--t);
 }
@@ -392,7 +410,7 @@ body { background: var(--bg-base); color: var(--text); }
 
 .btn-reject {
   background: var(--red-subtle); border: 1px solid var(--red);
-  color: var(--red); padding: 4px 12px; border-radius: var(--r);
+  color: var(--red); padding: 4px 12px; border-radius: var(--r-pill);
   font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit;
   transition: background var(--t);
 }
@@ -487,6 +505,32 @@ body { background: var(--bg-base); color: var(--text); }
 
 input[type="range"] { accent-color: var(--accent); }
 
+/* ─── Icons ───────────────────────────────────────────────── */
+
+svg[aria-hidden="true"] { display: inline-block; vertical-align: -0.15em; flex-shrink: 0; }
+
+.topbar-logo svg { width: 18px; height: 18px; }
+.dropzone-icon svg { width: 22px; height: 22px; }
+.chat-empty-icon svg { width: 36px; height: 36px; opacity: 0.35; }
+.avatar svg { width: 14px; height: 14px; }
+.section-title svg, .modal-title svg, .studio-tab svg { width: 12px; height: 12px; }
+.btn svg { width: 13px; height: 13px; }
+.toast-close svg, .modal-close svg { width: 15px; height: 15px; }
+
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Layout utilities (small, reused inline-style replacements) ──── */
+
+.row-gap-sm { display: flex; gap: 6px; align-items: center; }
+.col-gap-sm { display: flex; flex-direction: column; gap: 7px; }
+.flex-1 { flex: 1; }
+.mt-8 { margin-top: 8px; }
+.mt-12 { margin-top: 12px; }
+.ml-4 { margin-left: 4px; }
+.input-sm { width: 160px; font-size: 12px; padding: 4px 8px; }
+.visually-hidden-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
 /* ─── Transcript tab (Step 10) ──────────────────────────────── */
 .tabs { display: flex; gap: 2px; margin-bottom: 10px; }
 .tab {
@@ -524,7 +568,7 @@ input[type="range"] { accent-color: var(--accent); }
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 16px; border-bottom: 1px solid var(--border-subtle);
 }
-.modal-title { font-size: 14px; font-weight: 600; }
+.modal-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .modal-close {
   background: none; border: none; color: var(--text-3); cursor: pointer;
   font-size: 16px; padding: 4px;

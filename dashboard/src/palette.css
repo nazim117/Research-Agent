@@ -1,0 +1,14 @@
+/*
+ * Brand palette — source of truth for dashboard colors.
+ * Raw palette values only; semantic roles (backgrounds, text, accent, etc.)
+ * are mapped from these in index.css so the palette can be swapped here
+ * without hunting through component styles.
+ */
+
+:root {
+  --palette-prussian-blue:    #00072d;
+  --palette-deep-navy:        #001c55;
+  --palette-imperial-blue:    #0a2472;
+  --palette-cornflower-ocean: #0e6ba8;
+  --palette-frosted-blue:     #a6e1fa;
+}
