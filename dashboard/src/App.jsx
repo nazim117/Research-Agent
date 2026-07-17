@@ -3,8 +3,11 @@ import ReactMarkdown from 'react-markdown';
 import * as api from './api.js';
 import {
   IconX, IconSettings, IconRefresh, IconUpload, IconLoader,
-  IconSearch, IconBook, IconUser, IconBot, IconClipboard, IconSun, IconEdit, IconCheck, IconAlert,
+  IconSearch, IconBook, IconBot, IconClipboard, IconSun, IconEdit, IconCheck, IconAlert,
+  IconTrash,
 } from './icons.jsx';
+import SetupWizard, { STATUS_KEY as WIZARD_STATUS_KEY } from './wizard/SetupWizard.jsx';
+import SettingsPage from './settings/SettingsPage.jsx';
 
 // ─── Toast ────────────────────────────────────────────────────────────────
 
@@ -87,7 +90,7 @@ function IntegrationModal({ project, onSave, onClose }) {
 
 // ─── TopBar ────────────────────────────────────────────────────────────────
 
-function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditIntegrations }) {
+function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditIntegrations, onboardingIncomplete, onOpenWizard, onOpenSettings }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
@@ -173,6 +176,16 @@ function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditInteg
             Cancel
           </button>
         </form>
+      )}
+
+      <button className="icon-btn ml-auto" onClick={onOpenSettings} aria-label="Open settings" data-testid="open-settings">
+        <IconSettings />
+      </button>
+
+      {onboardingIncomplete && (
+        <button className="finish-setup-pill" onClick={onOpenWizard} data-testid="finish-setup-pill">
+          Finish setup
+        </button>
       )}
     </header>
   );
@@ -343,6 +356,27 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
     }
   }
 
+  async function handleToggleSource(source, enabled) {
+    try {
+      await api.setSourceEnabled(projectId, source, enabled);
+      onSourcesChange();
+    } catch (err) {
+      setToast({ message: `Update failed: ${err.message}` });
+    }
+  }
+
+  async function handleDeleteSource(s) {
+    if (!window.confirm(
+      `Delete "${s.source}"? This removes its ${s.chunks} chunk(s) and any extracted decisions/action items/risks.`
+    )) return;
+    try {
+      await api.deleteSource(projectId, s.source);
+      onSourcesChange();
+    } catch (err) {
+      setToast({ message: `Delete failed: ${err.message}` });
+    }
+  }
+
   async function handleSearch(e) {
     e.preventDefault();
     if (!searchQ.trim()) return;
@@ -413,9 +447,29 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
             <p className="no-data">No sources ingested yet.</p>
           ) : (
             sources.map(s => (
-              <div key={s.source} className="source-item" data-testid="source-item">
+              <div
+                key={s.source}
+                className={`source-item${s.enabled === false ? ' source-item-disabled' : ''}`}
+                data-testid="source-item"
+              >
+                <input
+                  type="checkbox"
+                  checked={s.enabled !== false}
+                  onChange={e => handleToggleSource(s.source, e.target.checked)}
+                  title={s.enabled === false ? 'Excluded from chat — click to include' : 'Included in chat — click to exclude'}
+                  data-testid="source-enabled-toggle"
+                />
                 <span className="source-name" title={s.source}>{s.source}</span>
                 <span className="source-chunks">{s.chunks} chunks</span>
+                <button
+                  type="button"
+                  className="source-delete-btn"
+                  onClick={() => handleDeleteSource(s)}
+                  title={`Delete "${s.source}"`}
+                  data-testid="source-delete-btn"
+                >
+                  <IconTrash />
+                </button>
               </div>
             ))
           )}
@@ -428,13 +482,22 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
 
 // ─── Chat ─────────────────────────────────────────────────────────────────
 
+const CHAT_SESSION_ID = 'default';
+
 function ChatPane({ projectId, onActionDrafted }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const bottomRef = useRef(null);
 
-  useEffect(() => { setMessages([]); }, [projectId]);
+  useEffect(() => {
+    if (!projectId) { setMessages([]); return; }
+    let cancelled = false;
+    api.getHistory(projectId, CHAT_SESSION_ID)
+      .then(history => { if (!cancelled) setMessages(history ?? []); })
+      .catch(() => { if (!cancelled) setMessages([]); });
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -447,7 +510,7 @@ function ChatPane({ projectId, onActionDrafted }) {
     setBusy(true);
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     try {
-      const res = await api.chat(projectId, 'default', text);
+      const res = await api.chat(projectId, CHAT_SESSION_ID, text);
       setMessages(prev => [...prev, { role: 'assistant', content: res.reply, citations: res.citations ?? [] }]);
       if (res.reply?.includes('Drafted action')) onActionDrafted();
     } catch (err) {
@@ -473,11 +536,16 @@ function ChatPane({ projectId, onActionDrafted }) {
   return (
     <div className="chat-pane">
       <div className="chat-messages">
+        {messages.length === 0 && !busy && (
+          <div className="chat-empty-state chat-empty-inline">
+            <div className="chat-empty-icon"><IconBot /></div>
+            <div className="chat-empty-text">Hey! Ask me anything about this project.</div>
+            <div className="chat-empty-subtext">I can pull from your ingested docs, meeting notes, and synced Jira/GitHub items.</div>
+          </div>
+        )}
+
         {messages.map((m, i) => (
           <div key={i} className={`message ${m.role === 'user' ? 'user' : ''}`}>
-            <div className={`avatar ${m.role === 'user' ? 'user' : 'ai'}`}>
-              {m.role === 'user' ? <IconUser /> : <IconBot />}
-            </div>
             <div className={`bubble ${m.role === 'user' ? 'user' : 'ai'}`} data-testid={m.role === 'user' ? 'chat-message-user' : 'chat-message'}>
               <div className="prose">
                 <ReactMarkdown>{m.content}</ReactMarkdown>
@@ -500,7 +568,6 @@ function ChatPane({ projectId, onActionDrafted }) {
 
         {busy && (
           <div className="message">
-            <div className="avatar ai"><IconBot /></div>
             <div className="typing-indicator">
               <div className="dot" />
               <div className="dot" />
@@ -826,15 +893,95 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   );
 }
 
+// ─── Pane resizer ───────────────────────────────────────────────────────────
+
+const PANE_MIN_WIDTH = 220;
+const PANE_MAX_WIDTH = 560;
+const DEFAULT_LEFT_WIDTH = 320;
+const DEFAULT_RIGHT_WIDTH = 360;
+
+function clampPaneWidth(w) {
+  return Math.min(PANE_MAX_WIDTH, Math.max(PANE_MIN_WIDTH, w));
+}
+
+function PaneResizer({ side, onResize, onResizeEnd, active }) {
+  function handleMouseDown(e) {
+    e.preventDefault();
+    document.body.classList.add('pane-resizing');
+
+    function handleMouseMove(ev) {
+      const width = side === 'left' ? ev.clientX : window.innerWidth - ev.clientX;
+      onResize(clampPaneWidth(width));
+    }
+    function handleMouseUp() {
+      document.body.classList.remove('pane-resizing');
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      onResizeEnd();
+    }
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  }
+
+  return (
+    <div
+      className={`pane-resizer ${side === 'left' ? 'pane-resizer-left' : 'pane-resizer-right'} ${active ? 'dragging' : ''}`}
+      onMouseDown={handleMouseDown}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={side === 'left' ? 'Resize sources panel' : 'Resize studio panel'}
+    />
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [projects, setProjects] = useState([]);
-  const [activeId, setActiveId] = useState(() => localStorage.getItem('projectId') || null);
+  const [activeId, setActiveId] = useState(() => {
+    // Prefer the "default project" set in Settings (JSON-encoded, via
+    // useLocalStorageState) over the last-selected project, if one is set.
+    try {
+      const raw = localStorage.getItem('defaultProjectId');
+      const defaultId = raw ? JSON.parse(raw) : null;
+      if (defaultId) return defaultId;
+    } catch {
+      // ignore — fall through to last-selected project
+    }
+    return localStorage.getItem('projectId') || null;
+  });
   const [toast, setToast] = useState(null);
   const [actionsKey, setActionsKey] = useState(0);
   const [sourcesKey, setSourcesKey] = useState(0);
   const [editProject, setEditProject] = useState(null);
+
+  const [showWizard, setShowWizard] = useState(() => localStorage.getItem(WIZARD_STATUS_KEY) === null);
+  const [onboardingStatus, setOnboardingStatus] = useState(() => localStorage.getItem(WIZARD_STATUS_KEY));
+  const [showSettings, setShowSettings] = useState(false);
+
+  function handleWizardExit() {
+    setShowWizard(false);
+    setOnboardingStatus(localStorage.getItem(WIZARD_STATUS_KEY));
+  }
+
+  function handleOpenWizardFromSettings() {
+    setShowSettings(false);
+    setShowWizard(true);
+  }
+
+  const [leftWidth, setLeftWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('leftPaneWidth'));
+    return saved ? clampPaneWidth(saved) : DEFAULT_LEFT_WIDTH;
+  });
+  const [rightWidth, setRightWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('rightPaneWidth'));
+    return saved ? clampPaneWidth(saved) : DEFAULT_RIGHT_WIDTH;
+  });
+  const [resizingSide, setResizingSide] = useState(null);
+  const leftWidthRef = useRef(leftWidth);
+  const rightWidthRef = useRef(rightWidth);
+  useEffect(() => { leftWidthRef.current = leftWidth; }, [leftWidth]);
+  useEffect(() => { rightWidthRef.current = rightWidth; }, [rightWidth]);
 
   const refreshProjects = useCallback(async () => {
     const list = await api.listProjects();
@@ -864,8 +1011,18 @@ export default function App() {
 
   const activeProject = projects.find(p => p.id === activeId) || null;
 
+  function handleLeftResizeEnd() {
+    localStorage.setItem('leftPaneWidth', String(leftWidthRef.current));
+    setResizingSide(null);
+  }
+
+  function handleRightResizeEnd() {
+    localStorage.setItem('rightPaneWidth', String(rightWidthRef.current));
+    setResizingSide(null);
+  }
+
   return (
-    <div className="app">
+    <div className="app" style={{ '--left-w': `${leftWidth}px`, '--right-w': `${rightWidth}px` }}>
       <TopBar
         projects={projects}
         activeId={activeId}
@@ -873,6 +1030,9 @@ export default function App() {
         onRefresh={refreshProjects}
         setToast={setToast}
         onEditIntegrations={() => setEditProject(activeProject)}
+        onboardingIncomplete={onboardingStatus !== 'completed'}
+        onOpenWizard={() => setShowWizard(true)}
+        onOpenSettings={() => setShowSettings(true)}
       />
       <LeftPane
         projectId={activeId}
@@ -880,9 +1040,21 @@ export default function App() {
         onSourcesChange={() => setSourcesKey(k => k + 1)}
         setToast={setToast}
       />
+      <PaneResizer
+        side="left"
+        active={resizingSide === 'left'}
+        onResize={w => { setResizingSide('left'); setLeftWidth(w); }}
+        onResizeEnd={handleLeftResizeEnd}
+      />
       <ChatPane
         projectId={activeId}
         onActionDrafted={() => setActionsKey(k => k + 1)}
+      />
+      <PaneResizer
+        side="right"
+        active={resizingSide === 'right'}
+        onResize={w => { setResizingSide('right'); setRightWidth(w); }}
+        onResizeEnd={handleRightResizeEnd}
       />
       <StudioPane
         projectId={activeId}
@@ -903,6 +1075,22 @@ export default function App() {
           project={editProject}
           onSave={handleSaveIntegrations}
           onClose={() => setEditProject(null)}
+        />
+      )}
+
+      {showWizard && (
+        <SetupWizard onExit={handleWizardExit} onProjectCreated={refreshProjects} />
+      )}
+
+      {showSettings && (
+        <SettingsPage
+          onClose={() => setShowSettings(false)}
+          onOpenWizard={handleOpenWizardFromSettings}
+          projects={projects}
+          activeId={activeId}
+          onSelectProject={selectProject}
+          onRefreshProjects={refreshProjects}
+          setToast={setToast}
         />
       )}
     </div>

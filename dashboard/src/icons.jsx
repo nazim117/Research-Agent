@@ -150,3 +150,22 @@ export function IconCheck(props) {
     </svg>
   );
 }
+
+export function IconEye(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+export function IconEyeOff(props) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a17.6 17.6 0 0 1-2.6 3.68M6.6 6.6C3.4 8.5 1 12 1 12s4 8 11 8a9.7 9.7 0 0 0 5.4-1.6" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+      <path d="M1 1l22 22" />
+    </svg>
+  );
+}

@@ -1,0 +1,127 @@
+/* ─── Settings page ───────────────────────────────────────────────────────
+   Full-bleed page layout. Reuses .wizard-topbar/.wizard-link/.wizard-rail/
+   .wizard-rail-step/.wizard-rail-dot/.wizard-status-row/.wizard-model-row/
+   .wizard-fix-log/.wizard-warning/.wizard-step-title/.wizard-step-desc from
+   ../wizard/wizard.css (imported by SettingsPage.jsx) — only new, settings-
+   specific layout lives here. */
+
+.settings-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: var(--bg-canvas);
+  display: flex; flex-direction: column;
+}
+
+.settings-body {
+  flex: 1; min-height: 0;
+  display: flex;
+}
+
+/* ─── Rail ────────────────────────────────────────────────────────────── */
+
+.settings-rail {
+  width: 150px; flex-shrink: 0;
+  padding: 20px 14px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+
+.settings-rail-group + .settings-rail-group { margin-top: 22px; }
+
+.settings-rail-group-label {
+  font-size: 10px; font-weight: 700; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: 10px;
+}
+
+.settings-rail-footer {
+  margin-top: auto; padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* .wizard-rail-step is a <li> in the wizard rail (not clickable); the
+   settings rail reuses it on a <button> instead, so reset button chrome
+   while keeping the shared color/spacing rules. */
+.settings-rail button.wizard-rail-step {
+  background: none; border: none; padding: 0; width: 100%;
+  text-align: left; font-family: inherit; cursor: pointer;
+}
+
+.settings-rail-list {
+  display: flex; flex-direction: column; gap: 12px;
+  list-style: none;
+}
+
+/* ─── Content ─────────────────────────────────────────────────────────── */
+
+.settings-content {
+  flex: 1; min-width: 0;
+  overflow-y: auto;
+}
+
+.settings-tab-scroll {
+  padding: 28px 32px;
+  max-width: 720px;
+}
+
+.settings-section {
+  margin-bottom: 28px;
+}
+.settings-section:last-child { margin-bottom: 0; }
+
+/* ─── General tab: project rows ──────────────────────────────────────── */
+
+.settings-project-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r); padding: 10px 12px; margin-bottom: 8px;
+}
+.settings-project-name {
+  flex: 1; min-width: 0; font-size: 13px; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.settings-project-name.active { font-weight: 700; }
+.settings-project-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+/* ─── Integrations tab ────────────────────────────────────────────────── */
+
+.settings-service-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+@media (max-width: 640px) {
+  .settings-service-grid { grid-template-columns: 1fr; }
+}
+
+/* ─── Advanced tab: env var table ─────────────────────────────────────── */
+
+.settings-envvar-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.settings-envvar-row:last-child { border-bottom: none; }
+.settings-envvar-key {
+  width: 200px; flex-shrink: 0; font-size: 11.5px; color: var(--text-2);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.settings-envvar-value { flex: 1; min-width: 0; }
+.settings-envvar-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+
+.settings-dirty-badge {
+  background: var(--amber-subtle); color: var(--amber);
+  border-radius: var(--r-pill); font-size: 10px; font-weight: 700;
+  padding: 1px 8px; margin-left: 8px;
+}
+
+/* ─── Marketplace tab ─────────────────────────────────────────────────── */
+
+.settings-marketplace-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+.settings-marketplace-card {
+  background: var(--bg-raised); border: 1px dashed var(--border);
+  border-radius: var(--r-lg); padding: 20px 14px; min-height: 100px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-3); font-size: 12px; opacity: 0.55;
+}

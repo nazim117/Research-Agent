@@ -1,0 +1,235 @@
+/* ─── Setup wizard ────────────────────────────────────────────────────────
+   Scoped, self-contained styles for the first-time setup wizard. Reuses
+   the design tokens defined in ../index.css (:root) — no new palette. */
+
+.wizard-overlay {
+  position: fixed; inset: 0; z-index: 500;
+  background: var(--bg-canvas);
+  display: flex; flex-direction: column;
+}
+
+/* ─── Top bar ─────────────────────────────────────────────────────────── */
+
+.wizard-topbar {
+  flex-shrink: 0; height: 48px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.wizard-logo {
+  font-size: 13px; font-weight: 700; color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.wizard-topbar-actions {
+  margin-left: auto;
+  display: flex; align-items: center; gap: 14px;
+}
+
+.wizard-link {
+  background: none; border: none; font-family: inherit;
+  font-size: 12px; color: var(--text-3); cursor: pointer;
+  padding: 0; transition: color var(--t);
+}
+.wizard-link:hover { color: var(--text-2); }
+
+/* ─── Body: rail + content ────────────────────────────────────────────── */
+
+.wizard-body {
+  flex: 1; min-height: 0;
+  display: flex; justify-content: center;
+  padding: 32px 16px;
+}
+
+.wizard-shell {
+  width: 100%; max-width: 860px; height: 100%; max-height: 560px;
+  display: flex;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+/* ─── Rail ────────────────────────────────────────────────────────────── */
+
+.wizard-rail {
+  width: 130px; flex-shrink: 0;
+  padding: 20px 14px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-base);
+  display: flex; flex-direction: column;
+}
+
+.wizard-rail-list {
+  display: flex; flex-direction: column; gap: 16px;
+  list-style: none;
+}
+
+.wizard-rail-step {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--text-3); font-weight: 600;
+}
+
+.wizard-rail-step.done { color: var(--text-2); }
+.wizard-rail-step.current { color: var(--accent); }
+
+.wizard-rail-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid var(--text-3);
+  background: transparent;
+}
+.wizard-rail-step.done .wizard-rail-dot {
+  border-color: var(--accent); background: var(--accent);
+}
+.wizard-rail-step.current .wizard-rail-dot {
+  border-color: var(--accent); background: var(--accent);
+}
+
+.wizard-rail-progress {
+  margin-top: auto; padding-top: 14px;
+  font-size: 11px; color: var(--text-3);
+}
+
+/* ─── Content pane ────────────────────────────────────────────────────── */
+
+.wizard-content {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column;
+}
+
+.wizard-step-scroll {
+  flex: 1; overflow-y: auto;
+  padding: 28px 32px;
+}
+
+.wizard-step-title {
+  font-size: 18px; font-weight: 700; color: var(--text);
+  margin-bottom: 6px;
+}
+
+.wizard-step-desc {
+  font-size: 13px; color: var(--text-3); line-height: 1.6;
+  margin-bottom: 20px; max-width: 460px;
+}
+
+.wizard-footer {
+  flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 32px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.wizard-back {
+  background: none; border: none; font-family: inherit;
+  font-size: 12px; color: var(--text-3); cursor: pointer; padding: 0;
+  transition: color var(--t);
+}
+.wizard-back:hover { color: var(--text-2); }
+.wizard-back:disabled { visibility: hidden; }
+
+.wizard-footer-right { display: flex; align-items: center; gap: 14px; }
+
+/* ─── Welcome step ────────────────────────────────────────────────────── */
+
+.wizard-welcome {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  gap: 10px; padding: 0 32px;
+}
+.wizard-welcome-headline { font-size: 22px; font-weight: 700; color: var(--text); }
+.wizard-welcome-sub { font-size: 13px; color: var(--text-3); max-width: 380px; line-height: 1.6; }
+
+/* ─── Status rows (health check / model rows) ────────────────────────── */
+
+.wizard-status-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r); padding: 10px 12px; margin-bottom: 8px;
+}
+
+.wizard-status-icon { flex-shrink: 0; display: flex; }
+.wizard-status-icon.ok { color: var(--green); }
+.wizard-status-icon.error { color: var(--red); }
+.wizard-status-icon.pending { color: var(--text-3); }
+
+.wizard-status-main { flex: 1; min-width: 0; }
+.wizard-status-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.wizard-status-detail { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.wizard-status-detail.error { color: var(--red); }
+
+.wizard-status-badge {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 2px 8px; border-radius: var(--r-pill); flex-shrink: 0;
+}
+.wizard-status-badge.optional { background: var(--bg-inset); color: var(--text-3); }
+
+.wizard-fix-log {
+  margin-top: 8px; font-size: 11px; color: var(--text-3);
+  background: var(--bg-inset); border-radius: var(--r-sm);
+  padding: 8px 10px; font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.wizard-fix-log summary { cursor: pointer; color: var(--text-2); font-family: inherit; }
+.wizard-fix-log-line { padding: 2px 0; }
+
+.wizard-warning {
+  font-size: 12px; color: var(--amber); background: var(--amber-subtle);
+  border-radius: var(--r); padding: 8px 10px; margin-top: 10px;
+}
+
+/* ─── Model rows ──────────────────────────────────────────────────────── */
+
+.wizard-model-row {
+  background: var(--bg-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r); padding: 12px; margin-bottom: 12px;
+}
+.wizard-model-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.wizard-model-label {
+  font-size: 11px; font-weight: 700; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  width: 90px; flex-shrink: 0;
+}
+.wizard-model-select {
+  flex: 1;
+}
+
+.wizard-progress-track {
+  width: 100%; height: 5px; border-radius: var(--r-pill);
+  background: var(--bg-inset); overflow: hidden; margin-top: 10px;
+}
+.wizard-progress-fill {
+  height: 100%; background: var(--accent);
+  transition: width 200ms linear;
+}
+.wizard-progress-text {
+  font-size: 11px; color: var(--text-3); margin-top: 5px;
+}
+
+/* ─── Success step ────────────────────────────────────────────────────── */
+
+.wizard-success {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  gap: 12px; padding: 0 32px;
+}
+.wizard-success-icon {
+  width: 52px; height: 52px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--green-subtle); color: var(--green);
+}
+.wizard-success-icon svg { width: 26px; height: 26px; }
+.wizard-success-title { font-size: 20px; font-weight: 700; color: var(--text); }
+.wizard-success-sub { font-size: 13px; color: var(--text-3); max-width: 380px; line-height: 1.6; }
+
+/* ─── Finish-setup banner (main dashboard) ───────────────────────────── */
+
+.finish-setup-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--accent-subtle); color: var(--accent);
+  border: 1px solid transparent; border-radius: var(--r-pill);
+  font-size: 11px; font-weight: 600; padding: 5px 12px;
+  cursor: pointer; font-family: inherit; transition: filter var(--t);
+}
+.finish-setup-pill:hover { filter: brightness(1.15); }
