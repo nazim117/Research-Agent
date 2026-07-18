@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as api from '../../api.js';
 import { IconCheck, IconAlert, IconLoader } from '../../icons.jsx';
 import ModelPickerRow from '../../shared/ModelPickerRow.jsx';
@@ -29,6 +29,14 @@ function TestButton() {
 
 export default function EmbeddingsTab() {
   const [embedModel, setEmbedModel] = useState('nomic-embed-text');
+  const [config, setConfig] = useState(null);
+
+  useEffect(() => {
+    api.getLlmConfig().then((c) => {
+      setConfig(c);
+      setEmbedModel(c.ollama.embed_model);
+    });
+  }, []);
 
   return (
     <div className="settings-section">
@@ -37,6 +45,15 @@ export default function EmbeddingsTab() {
         The active model is set via <code>OLLAMA_EMBED_MODEL</code> in your <code>.env</code>
         file — pull it below so it's available locally.
       </div>
+
+      {config && (
+        <div className="wizard-status-row">
+          <div className="wizard-status-main">
+            <div className="wizard-status-name">Active model</div>
+            <div className="wizard-status-detail">{config.ollama.embed_model}</div>
+          </div>
+        </div>
+      )}
 
       <TestButton />
 

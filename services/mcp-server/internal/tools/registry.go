@@ -50,6 +50,32 @@ func (r *Registry) Definitions() []mcp.ToolDefinition {
 	return defs
 }
 
+// IntegrationsStatusOut reports whether Jira/GitHub are configured, for
+// display in the dashboard. Never includes secrets (email, API token) —
+// only configured state and the non-secret Jira base URL.
+type IntegrationsStatusOut struct {
+	Jira struct {
+		Configured bool   `json:"configured"`
+		BaseURL    string `json:"base_url"`
+	} `json:"jira"`
+	GitHub struct {
+		Configured bool `json:"configured"`
+	} `json:"github"`
+}
+
+// IntegrationsStatus reports Jira/GitHub configured state from the clients
+// already constructed in NewRegistry — no env vars are re-read here, and no
+// secret values (email, token) are ever included.
+func (r *Registry) IntegrationsStatus() IntegrationsStatusOut {
+	var out IntegrationsStatusOut
+	if r.jira != nil {
+		out.Jira.Configured = true
+		out.Jira.BaseURL = r.jira.baseURL
+	}
+	out.GitHub.Configured = r.github != nil
+	return out
+}
+
 // Call dispatches a tool by name and returns the result.
 func (r *Registry) Call(name string, args map[string]any) (mcp.ToolCallResult, error) {
 	switch name {

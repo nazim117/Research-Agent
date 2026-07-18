@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
@@ -40,9 +41,11 @@ from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, val
 from config import settings
 from document_state import DocumentStateStore
 from embeddings import embed
+from health import check_detailed_health
 from mcp_client import MCPClient, MCPError
 from llm import chat, validate_llm_config
 from memory import ConversationStore
+from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
 import rag
 from request_context import set_request_id, new_request_id
@@ -411,6 +414,74 @@ async def _require_project(project_id: str) -> Project:
 async def health():
     """Liveness check.  Returns 200 OK when the service is running."""
     return {"status": "ok"}
+
+
+# Routes — system health, models, config (dashboard Setup Wizard / Settings support)
+
+@app.get("/health/detailed")
+async def health_detailed():
+    """Aggregate reachability for Ollama, Qdrant, Docker, and mcp-server.
+
+    Each dependency is probed independently — one being down never masks or
+    delays the others' status.  Docker and mcp-server are optional.
+    """
+    return await check_detailed_health(settings, _mcp)
+
+
+@app.get("/models")
+async def get_models():
+    """List Ollama models already installed locally."""
+    try:
+        return await list_models(settings)
+    except ConnectionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class ModelPullRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+
+
+@app.post("/models/pull")
+async def post_models_pull(req: ModelPullRequest):
+    """Stream an Ollama model pull's progress straight through to the caller
+    as newline-delimited JSON, matching Ollama's own /api/pull response.
+    """
+    return StreamingResponse(
+        stream_pull(settings, req.name),
+        media_type="application/x-ndjson",
+    )
+
+
+@app.get("/config")
+async def get_config():
+    """Read-only effective LLM configuration.  Never includes secrets —
+    openai_api_key/jira_api_token/github_token are never serialized here.
+    """
+    return {
+        "provider": settings.llm_provider,
+        "ollama": {
+            "chat_model": settings.ollama_chat_model,
+            "embed_model": settings.ollama_embed_model,
+            "base_url": settings.ollama_base_url,
+        },
+        "openai": {
+            "model": settings.openai_model,
+            "provider_label": settings.openai_provider_label,
+            "base_url": settings.openai_base_url,
+            "configured": bool(settings.openai_api_key),
+        },
+    }
+
+
+@app.get("/integrations/status")
+async def get_integrations_status():
+    """Jira/GitHub configured status, proxied from mcp-server — the only
+    process allowed to hold those credentials.  Never includes secrets.
+    """
+    try:
+        return await _mcp.get_integrations_status()
+    except MCPError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 # Routes — project CRUD

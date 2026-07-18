@@ -34,7 +34,7 @@ export default function LlmModelsTab() {
   useEffect(() => {
     api.getLlmConfig().then((c) => {
       setConfig(c);
-      setChatModel(c.ollama.chatModel);
+      setChatModel(c.ollama.chat_model);
     });
   }, []);
 
@@ -53,8 +53,8 @@ export default function LlmModelsTab() {
             <div className="wizard-status-name">Provider: {config.provider === 'ollama' ? 'Ollama' : 'OpenAI-compatible'}</div>
             <div className="wizard-status-detail">
               {config.provider === 'ollama'
-                ? `Active model: ${config.ollama.chatModel}`
-                : `${config.openai.model || '(not set)'} at ${config.openai.baseUrl || '(not set)'}`}
+                ? `Active model: ${config.ollama.chat_model}`
+                : `${config.openai.model || '(not set)'} at ${config.openai.base_url || '(not set)'}`}
             </div>
           </div>
         </div>

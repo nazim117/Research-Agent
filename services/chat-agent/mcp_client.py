@@ -106,3 +106,35 @@ class MCPClient:
             return json.loads(raw_text)
         except json.JSONDecodeError as exc:
             raise MCPError(f"tool {name!r} returned non-JSON text: {raw_text[:200]}") from exc
+
+    async def _get(self, path: str) -> dict:
+        """Shared GET helper for mcp-server's plain HTTP endpoints (not the
+        JSON-RPC-style /tools/call protocol `call()` above uses).
+        """
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                transport=self._transport,
+            ) as client:
+                resp = await client.get(f"{self._base_url}{path}")
+        except httpx.RequestError as exc:
+            raise MCPError(f"mcp-server unreachable: {exc}") from exc
+
+        if resp.status_code != 200:
+            raise MCPError(
+                f"mcp-server returned HTTP {resp.status_code}: {resp.text[:200]}",
+                status_code=resp.status_code,
+            )
+        return resp.json()
+
+    async def get_health(self) -> dict:
+        """Check mcp-server's own liveness. Raises MCPError if unreachable."""
+        return await self._get("/health")
+
+    async def get_integrations_status(self) -> dict:
+        """Fetch Jira/GitHub configured status from mcp-server.
+
+        Never includes secrets — mcp-server's /integrations/status endpoint
+        only reports configured booleans and the non-secret Jira base URL.
+        """
+        return await self._get("/integrations/status")

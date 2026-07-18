@@ -4,14 +4,14 @@ const SERVICE_LABELS = {
   ollama: 'Ollama',
   qdrant: 'Qdrant',
   docker: 'Docker',
-  mcpServer: 'mcp-server',
+  mcp_server: 'mcp-server',
 };
 
 const DOCS_LINKS = {
   ollama: 'https://ollama.com/download',
   qdrant: 'https://qdrant.tech/documentation/quick-start/',
   docker: 'https://docs.docker.com/desktop/',
-  mcpServer: 'https://github.com',
+  mcp_server: 'https://github.com',
 };
 
 export default function ServiceStatusRow({ service, info, fix, onFix, extraActions, testIdPrefix = 'wizard' }) {

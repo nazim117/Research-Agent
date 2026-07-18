@@ -6,7 +6,7 @@ function formatBytes(n) {
 }
 
 export default function ModelPickerRow({ kind, label, options, selectedModel, onInstalled }) {
-  const { model, setModel, installedModels, pulling, progress, handlePull, handleUseExisting } =
+  const { model, setModel, installedModels, pulling, progress, pullError, handlePull, handleUseExisting } =
     useModelPicker(kind, options, selectedModel, onInstalled);
 
   const alreadyInstalled = installedModels.includes(model);
@@ -52,6 +52,11 @@ export default function ModelPickerRow({ kind, label, options, selectedModel, on
             downloading... {formatBytes(progress.downloaded)} / {formatBytes(progress.total)}
           </div>
         </>
+      )}
+      {pullError && !pulling && (
+        <div className="wizard-status-detail error mt-8" data-testid={`model-picker-${kind}-error`}>
+          {pullError}
+        </div>
       )}
     </div>
   );

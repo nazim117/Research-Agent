@@ -169,6 +169,17 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 	})
 
+	// GET /integrations/status — Jira/GitHub configured state for the dashboard.
+	// Never returns secrets (email, API token) — see tools.Registry.IntegrationsStatus.
+	mux.HandleFunc("/integrations/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(registry.IntegrationsStatus())
+	})
+
 	log.Printf("MCP server listening on :%s (tools: %d)", port, len(registry.Definitions()))
 
 	// otelhttp.NewHandler wraps the entire mux with:

@@ -83,30 +83,15 @@ export async function ingestFile(projectId, file, kind) {
 export const ingestUrl = (projectId, url, kind) =>
   request('POST', '/ingest/url', { project_id: projectId, url, kind });
 
-// ─── Setup wizard ───────────────────────────────────────────────────────
-// TODO(backend): none of the functions below have a real endpoint yet.
-// `GET /health` (main.py) is a bare liveness check with no per-dependency
-// status. There is no model-pull, model-list, or credential-test endpoint
-// anywhere in chat-agent or mcp-server. These stubs return realistic-shaped
-// fake data with a small delay so the wizard UI is fully functional on its
-// own; swap the bodies for real `fetch` calls once the backend exists —
-// component code should not need to change.
+// ─── Setup wizard / Settings — system health, models, config ────────────
+// Backed by real endpoints added to chat-agent (health.py, ollama_models.py,
+// GET /config) and mcp-server (GET /integrations/status). See TODO(backend)
+// notes below for what's still stubbed (nothing here reads/writes secrets,
+// and nothing controls services — see fixService/controlService/env vars).
 
 const fakeDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// TODO(backend): replace with a real aggregate health endpoint, e.g.
-// `GET /health/detailed`, that reports each dependency's reachability.
-export async function checkSystemHealth() {
-  await fakeDelay(700);
-  return {
-    ollama: { status: 'ok', detail: 'v0.3.12 — reachable at localhost:11434', required: true },
-    qdrant: { status: 'ok', detail: 'v1.13.1 — reachable at localhost:6333', required: true },
-    docker: { status: 'ok', detail: 'Docker Desktop running', required: false },
-    // mcp-server only brokers Jira/GitHub sync — everything else (chat, RAG,
-    // memory) works without it, so it's optional here rather than a blocker.
-    mcpServer: { status: 'ok', detail: 'v0.1.0 — reachable at localhost:8083', required: false },
-  };
-}
+export const checkSystemHealth = () => request('GET', '/health/detailed');
 
 // TODO(backend): replace with a real fix action (e.g. `docker compose up -d`,
 // or an OS-level service restart) exposed via a future admin endpoint.
@@ -121,24 +106,50 @@ export async function fixService(serviceName) {
   };
 }
 
-// TODO(backend): replace with a real "list locally-installed Ollama models"
-// call (e.g. proxied through chat-agent to `GET /api/tags` on Ollama).
-export async function listLocalModels() {
-  await fakeDelay(400);
-  return { installed: ['nomic-embed-text'] };
-}
+export const listLocalModels = () => request('GET', '/models');
 
-// TODO(backend): replace with a real model pull, streaming progress from
-// Ollama's `POST /api/pull` (which already reports done/total bytes) through
-// to the caller instead of faking it here.
+// Streams progress from Ollama's own pull API (proxied by chat-agent's
+// POST /models/pull) — not a stub. Reads newline-delimited JSON as it
+// arrives and reports {downloaded, total} whenever the current line
+// includes those fields; resolves when a line reports status "success",
+// rejects if a line carries an "error" field (Ollama reports pull failures
+// like an unknown model name this way, inside an otherwise-200 stream) or
+// the stream ends without ever reporting success.
 export async function pullModel(modelName, onProgress) {
-  const total = 2_000_000_000;
-  let downloaded = 0;
-  while (downloaded < total) {
-    await fakeDelay(200);
-    downloaded = Math.min(total, downloaded + total / 8);
-    onProgress?.({ downloaded, total });
+  const res = await fetch(BASE + '/models/pull', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: modelName }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status} ${text}`);
   }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let succeeded = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // last element may be a partial line — carry into next chunk
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const data = JSON.parse(line);
+      if (data.error) throw new Error(data.error);
+      if (data.completed !== undefined && data.total !== undefined) {
+        onProgress?.({ downloaded: data.completed, total: data.total });
+      }
+      if (data.status === 'success') succeeded = true;
+    }
+  }
+
+  if (!succeeded) throw new Error(`Model pull did not complete for "${modelName}".`);
   return { ok: true };
 }
 
@@ -158,45 +169,19 @@ export async function testGitHubConnection({ token }) {
   return { ok: true, message: 'Connected successfully.' };
 }
 
-// ─── Settings page ──────────────────────────────────────────────────────
-// TODO(backend): all functions below are stubs. `LLM_PROVIDER`, model names,
-// and JIRA_*/GITHUB_TOKEN are deploy-time-only env vars today (see
-// services/chat-agent/config.py) — there is no runtime read or write path
-// anywhere in chat-agent or mcp-server. These return fake-but-realistic data
-// so the Settings UI is demoable; the UI treats this data as read-only /
-// informational rather than something a "Save" button submits, since there
-// is nowhere real for it to go yet.
-
-// TODO(backend): replace with a real `GET /config`-style endpoint once one
-// exists. Until then this is illustrative only.
-export async function getLlmConfig() {
-  await fakeDelay(300);
-  return {
-    provider: 'ollama',
-    ollama: { chatModel: 'llama3' },
-    openai: { baseUrl: '', apiKey: '', model: '', configured: false },
-  };
-}
+export const getLlmConfig = () => request('GET', '/config');
 
 // Lightweight reachability check reused by both the LLM Models and
 // Embeddings tabs (embeddings always route through Ollama regardless of
-// chat provider — see services/chat-agent/config.py).
+// chat provider — see services/chat-agent/config.py). Derived from the real
+// aggregate health check rather than its own endpoint.
 export async function testOllamaConnection() {
-  await fakeDelay(500);
-  return { ok: true, message: 'Ollama reachable at localhost:11434.' };
+  const health = await checkSystemHealth();
+  const ollama = health.ollama;
+  return { ok: ollama.status === 'ok', message: ollama.detail };
 }
 
-// TODO(backend): mcp-server already computes jiraIsConfigured()/
-// githubIsConfigured() internally (services/mcp-server/internal/tools/
-// jira.go, github.go) but doesn't expose them via any route. Replace with a
-// real status endpoint once one exists.
-export async function getIntegrationStatus() {
-  await fakeDelay(400);
-  return {
-    jira: { configured: false, baseUrl: null },
-    github: { configured: false },
-  };
-}
+export const getIntegrationStatus = () => request('GET', '/integrations/status');
 
 // TODO(backend): replace with a real start/stop/restart action. No process
 // control endpoint exists on chat-agent or mcp-server today; docker-compose.yml

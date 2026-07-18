@@ -4,7 +4,7 @@ import { IconAlert, IconCheck, IconLoader, IconRefresh } from '../../icons.jsx';
 import { useHealthChecks } from '../../shared/useHealthChecks.js';
 import ServiceStatusRow from '../../shared/ServiceStatusRow.jsx';
 
-const SERVICES = ['ollama', 'qdrant', 'docker', 'mcpServer'];
+const SERVICES = ['ollama', 'qdrant', 'docker', 'mcp_server'];
 const REQUIRED_VARS = {
   jira: ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'],
   github: ['GITHUB_TOKEN'],
@@ -20,7 +20,7 @@ function IntegrationRow({ name, label, status, onRecheck, checking }) {
         <div className="wizard-status-name">{label}</div>
         <div className="wizard-status-detail">
           {status?.configured
-            ? (name === 'jira' ? status.baseUrl : 'Connected')
+            ? (name === 'jira' ? status.base_url : 'Connected')
             : `Not configured — set ${REQUIRED_VARS[name].join(', ')} in mcp-server's .env`}
         </div>
       </div>
