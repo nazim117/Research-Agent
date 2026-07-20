@@ -108,6 +108,20 @@
   padding: 1px 8px; margin-left: 8px;
 }
 
+/* ─── LLM Models tab: cloud provider chooser ──────────────────────────── */
+
+/* Reuses .tab's look (index.css) for individual chips, but in a wrapping
+   row with auto-sized chips instead of .tabs' flex:1 (built for 2-3 evenly
+   split tabs, not 6 provider chips). */
+.llm-provider-chips {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px;
+}
+.llm-provider-chips .tab { flex: 0 0 auto; padding: 6px 12px; }
+
+.wizard-status-badge.active {
+  background: var(--green-subtle); border: 1px solid var(--green); color: var(--green);
+}
+
 /* ─── Marketplace tab ─────────────────────────────────────────────────── */
 
 .settings-marketplace-grid {

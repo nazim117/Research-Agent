@@ -46,6 +46,21 @@ def test_set_env_var_rejects_unknown_key(tmp_path):
         env_config.set_env_var("SOME_RANDOM_VAR", "x", env_path)
 
 
+def test_set_env_var_rejects_invalid_llm_provider_value(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("")
+    with pytest.raises(ValueError):
+        env_config.set_env_var("LLM_PROVIDER", "definitely-not-a-real-provider", env_path)
+    assert "LLM_PROVIDER" not in env_path.read_text()
+
+
+def test_set_env_var_accepts_valid_llm_provider_values(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("")
+    env_config.set_env_var("LLM_PROVIDER", "openai_compatible", env_path)
+    assert os.environ["LLM_PROVIDER"] == "openai_compatible"
+
+
 def test_set_env_var_persists_and_updates_process_env(tmp_path):
     env_path = tmp_path / ".env"
     env_path.write_text("LLM_PROVIDER=ollama\n")

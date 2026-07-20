@@ -3,6 +3,7 @@ import * as api from '../../api.js';
 import { IconLoader, IconRefresh } from '../../icons.jsx';
 import EnvVarRow from '../../shared/EnvVarRow.jsx';
 import { maskHint } from '../../shared/maskHint.js';
+import { LLM_PROVIDER_OPTIONS } from '../../shared/llmProviderPresets.js';
 
 export default function AdvancedTab({ onDirtyChange, setToast }) {
   const [envVars, setEnvVars] = useState(null);
@@ -92,6 +93,7 @@ export default function AdvancedTab({ onDirtyChange, setToast }) {
           onChange={handleChange}
           onSave={handleSave}
           saving={savingKey === v.key}
+          options={v.key === 'LLM_PROVIDER' ? LLM_PROVIDER_OPTIONS : undefined}
         />
       ))}
     </div>

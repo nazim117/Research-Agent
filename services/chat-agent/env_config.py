@@ -42,6 +42,13 @@ OWNED_VARS: list[EnvVarSpec] = [
 
 OWNED_KEYS = {spec["key"] for spec in OWNED_VARS}
 
+# Values accepted for keys where anything else would silently break the app
+# only after a restart (see llm.py's dispatcher, which raises 500 for any
+# LLM_PROVIDER other than these two).
+VALID_VALUES: dict[str, set[str]] = {
+    "LLM_PROVIDER": {"ollama", "openai_compatible"},
+}
+
 
 def _mask_hint(value: str, secret: bool) -> str:
     if not secret:
@@ -72,6 +79,8 @@ def set_env_var(key: str, value: str, env_path: Path | str = DEFAULT_ENV_PATH) -
     """
     if key not in OWNED_KEYS:
         raise ValueError(f"{key!r} is not a recognized env var")
+    if key in VALID_VALUES and value not in VALID_VALUES[key]:
+        raise ValueError(f"{value!r} is not a valid value for {key} — expected one of {sorted(VALID_VALUES[key])}")
 
     set_key(str(env_path), key, value)
     os.environ[key] = value
