@@ -1,6 +1,6 @@
 """HTTP-level tests for the Settings/Wizard support routes added to main.py:
 GET /health/detailed, GET /models, POST /models/pull, GET /config,
-GET /integrations/status.
+GET /integrations/status, GET /config/env, PUT /config/env/{key}.
 
 Follows test_actions_api.py's pattern: AsyncClient + ASGITransport against
 the real app, with singletons monkeypatched so no real network is used.
@@ -105,3 +105,111 @@ async def test_integrations_status_maps_mcp_error_to_http_status():
             resp = await client.get("/integrations/status")
 
     assert resp.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_get_config_env_merges_local_and_remote_vars():
+    local_vars = [{"key": "LLM_PROVIDER", "secret": False, "configured": True, "hint": "ollama"}]
+    remote_vars = [{"key": "GITHUB_TOKEN", "secret": True, "configured": True, "hint": "…1234"}]
+    with (
+        patch("main.env_config.list_env_vars", return_value=local_vars),
+        patch("main._mcp") as mcp,
+    ):
+        mcp.get_env_vars = AsyncMock(return_value=remote_vars)
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/config/env")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"vars": local_vars + remote_vars, "mcp_error": None}
+
+
+@pytest.mark.asyncio
+async def test_get_config_env_degrades_when_mcp_server_unreachable():
+    local_vars = [{"key": "LLM_PROVIDER", "secret": False, "configured": True, "hint": "ollama"}]
+    with (
+        patch("main.env_config.list_env_vars", return_value=local_vars),
+        patch("main._mcp") as mcp,
+    ):
+        mcp.get_env_vars = AsyncMock(side_effect=MCPError("mcp-server unreachable", status_code=502))
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/config/env")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["vars"] == local_vars
+    assert body["mcp_error"] == "mcp-server unreachable"
+
+
+@pytest.mark.asyncio
+async def test_get_config_env_rejects_disallowed_origin():
+    with patch("main.env_config.list_env_vars", return_value=[]), patch("main._mcp") as mcp:
+        mcp.get_env_vars = AsyncMock(return_value=[])
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/config/env", headers={"Origin": "http://evil.example"})
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_config_env_allows_default_dashboard_origin():
+    with patch("main.env_config.list_env_vars", return_value=[]), patch("main._mcp") as mcp:
+        mcp.get_env_vars = AsyncMock(return_value=[])
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/config/env", headers={"Origin": "http://localhost:5173"})
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_put_config_env_owned_key_writes_locally_never_proxies():
+    with (
+        patch("main.env_config.set_env_var") as set_var,
+        patch("main._mcp") as mcp,
+    ):
+        mcp.set_env_var = AsyncMock()
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put("/config/env/OPENAI_API_KEY", json={"value": "sk-new-key"})
+
+    assert resp.status_code == 200
+    set_var.assert_called_once_with("OPENAI_API_KEY", "sk-new-key")
+    mcp.set_env_var.assert_not_called()
+    # The value must never be echoed back in the response.
+    assert "sk-new-key" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_put_config_env_unowned_key_proxies_to_mcp_server():
+    with (
+        patch("main.env_config.set_env_var") as set_var,
+        patch("main._mcp") as mcp,
+    ):
+        mcp.set_env_var = AsyncMock()
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put("/config/env/GITHUB_TOKEN", json={"value": "ghp_new"})
+
+    assert resp.status_code == 200
+    mcp.set_env_var.assert_called_once_with("GITHUB_TOKEN", "ghp_new")
+    set_var.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_put_config_env_rejects_disallowed_origin():
+    with patch("main.env_config.set_env_var") as set_var, patch("main._mcp") as mcp:
+        mcp.set_env_var = AsyncMock()
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put(
+                "/config/env/OPENAI_API_KEY",
+                json={"value": "sk-x"},
+                headers={"Origin": "http://evil.example"},
+            )
+
+    assert resp.status_code == 403
+    set_var.assert_not_called()
+    mcp.set_env_var.assert_not_called()

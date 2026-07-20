@@ -1,79 +1,104 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as api from '../../api.js';
-import { IconCheck, IconAlert, IconLoader } from '../../icons.jsx';
+import { IconLoader, IconRefresh } from '../../icons.jsx';
+import EnvVarRow from '../../shared/EnvVarRow.jsx';
+import { maskHint } from '../../shared/maskHint.js';
 
-// NOTE: Jira/GitHub credentials are currently env-var-only, set once at
-// deploy time on mcp-server (see services/chat-agent/config.py) — the
-// chat-agent process never holds them. This form is forward-looking
-// scaffolding for a future settings-storage mechanism; nothing entered
-// here is persisted anywhere yet (testJiraConnection/testGitHubConnection
-// are stubs, see api.js).
+const KEYS = ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN', 'GITHUB_TOKEN'];
 
-function TestButton({ onTest }) {
-  const [state, setState] = useState(null); // null | 'testing' | { ok, message }
+// Self-contained, same real save path as Settings > Advanced (api.listEnvVars/
+// updateEnvVar -> chat-agent's /config/env, proxied to mcp-server for these
+// keys). No local wizard state — credentials are saved directly to .env as
+// soon as each field's Save button is clicked, so there's nothing to lose if
+// the wizard is closed before finishing.
+export default function CredentialsStep() {
+  const [envVars, setEnvVars] = useState(null);
+  const [mcpError, setMcpError] = useState(null);
+  const [edits, setEdits] = useState({});
+  const [savingKey, setSavingKey] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  async function handleClick() {
-    setState('testing');
-    const result = await onTest();
-    setState(result);
+  function load() {
+    setLoading(true);
+    setLoadError(null);
+    api.listEnvVars()
+      .then(({ vars, mcp_error }) => {
+        setEnvVars(vars.filter((v) => KEYS.includes(v.key)));
+        setMcpError(mcp_error);
+      })
+      .catch((err) => setLoadError(err.message))
+      .finally(() => setLoading(false));
   }
 
-  return (
-    <div className="row-gap-sm mt-8">
-      <button className="btn btn-secondary btn-sm" onClick={handleClick} disabled={state === 'testing'}>
-        {state === 'testing' ? <><IconLoader className="spin" /> Testing...</> : 'Test connection'}
-      </button>
-      {state && state !== 'testing' && (
-        <span className={`wizard-status-detail ${state.ok ? '' : 'error'}`}>
-          {state.ok ? <IconCheck /> : <IconAlert />} {state.message}
-        </span>
-      )}
-    </div>
-  );
-}
+  useEffect(load, []);
 
-export default function CredentialsStep({ credentials, onCredentialsChange }) {
-  function set(field, value) {
-    onCredentialsChange({ ...credentials, [field]: value });
+  function handleChange(key, value) {
+    setEdits((e) => ({ ...e, [key]: value }));
+  }
+
+  async function handleSave(key) {
+    setSavingKey(key);
+    try {
+      const value = edits[key];
+      await api.updateEnvVar(key, value);
+      setEnvVars((vars) =>
+        vars.map((v) =>
+          v.key === key
+            ? { ...v, configured: value !== '', hint: v.secret ? maskHint(value) : value }
+            : v
+        )
+      );
+      setEdits((e) => {
+        const next = { ...e };
+        delete next[key];
+        return next;
+      });
+    } catch {
+      // Surfaced inline via the row's own disabled/save state — the wizard
+      // has no toast host, unlike Settings.
+    } finally {
+      setSavingKey(null);
+    }
   }
 
   return (
     <div>
       <div className="wizard-step-title">Connect Jira &amp; GitHub</div>
       <div className="wizard-step-desc">
-        Optional — skip if you don't need to sync work items. You can add these later from
-        a project's integration settings.
+        Optional — skip if you don't need to sync work items. You can also add these later
+        from Settings &gt; Advanced. Saved values are written to mcp-server's <code>.env</code>{' '}
+        immediately, but it needs a restart to pick them up.
       </div>
 
-      <label className="field-label">Jira URL</label>
-      <input
-        className="input"
-        value={credentials.jiraUrl}
-        onChange={(e) => set('jiraUrl', e.target.value)}
-        placeholder="https://yourteam.atlassian.net"
-        data-testid="wizard-jira-url"
-      />
-      <label className="field-label">Jira API token</label>
-      <input
-        className="input"
-        type="password"
-        value={credentials.jiraToken}
-        onChange={(e) => set('jiraToken', e.target.value)}
-        placeholder="••••••••"
-        data-testid="wizard-jira-token"
-      />
-      <TestButton onTest={() => api.testJiraConnection({ url: credentials.jiraUrl, token: credentials.jiraToken })} />
+      {loadError && (
+        <div>
+          <div className="wizard-warning" data-testid="wizard-credentials-error">
+            Couldn't load: {loadError}
+          </div>
+          <button className="btn btn-secondary btn-sm mt-8" onClick={load} disabled={loading}>
+            {loading ? <><IconLoader className="spin" /> Retrying...</> : <><IconRefresh /> Retry</>}
+          </button>
+        </div>
+      )}
+      {!envVars && !loadError && <p className="no-data">Loading...</p>}
 
-      <label className="field-label mt-12">GitHub token</label>
-      <input
-        className="input"
-        type="password"
-        value={credentials.githubToken}
-        onChange={(e) => set('githubToken', e.target.value)}
-        placeholder="ghp_••••••••"
-        data-testid="wizard-github-token"
-      />
-      <TestButton onTest={() => api.testGitHubConnection({ token: credentials.githubToken })} />
+      {mcpError && (
+        <div className="wizard-warning mt-8" data-testid="wizard-credentials-mcp-error">
+          Couldn't reach mcp-server, so these can't be saved right now: {mcpError}
+        </div>
+      )}
+
+      {envVars && envVars.map((v) => (
+        <EnvVarRow
+          key={v.key}
+          envVar={v}
+          draft={edits[v.key]}
+          onChange={handleChange}
+          onSave={handleSave}
+          saving={savingKey === v.key}
+        />
+      ))}
     </div>
   );
 }

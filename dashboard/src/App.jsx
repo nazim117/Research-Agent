@@ -155,8 +155,7 @@ function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditInteg
         ))}
         <option value="" disabled>──────</option>
         <option value="__new__">+ New project</option>
-        {activeId && <option value="__edit__">Edit integrations</option>}
-        {activeId && <option value="__delete__">Delete project</option>}
+        {activeId && <option value="__delete__">- Delete project</option>}
       </select>
 
       {showNewInput && (
@@ -964,11 +963,6 @@ export default function App() {
     setOnboardingStatus(localStorage.getItem(WIZARD_STATUS_KEY));
   }
 
-  function handleOpenWizardFromSettings() {
-    setShowSettings(false);
-    setShowWizard(true);
-  }
-
   const [leftWidth, setLeftWidth] = useState(() => {
     const saved = Number(localStorage.getItem('leftPaneWidth'));
     return saved ? clampPaneWidth(saved) : DEFAULT_LEFT_WIDTH;
@@ -1085,7 +1079,6 @@ export default function App() {
       {showSettings && (
         <SettingsPage
           onClose={() => setShowSettings(false)}
-          onOpenWizard={handleOpenWizardFromSettings}
           projects={projects}
           activeId={activeId}
           onSelectProject={selectProject}

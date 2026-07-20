@@ -138,3 +138,35 @@ class MCPClient:
         only reports configured booleans and the non-secret Jira base URL.
         """
         return await self._get("/integrations/status")
+
+    async def _put(self, path: str, json_body: dict) -> dict:
+        """Shared PUT helper, mirrors _get."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout,
+                transport=self._transport,
+            ) as client:
+                resp = await client.put(f"{self._base_url}{path}", json=json_body)
+        except httpx.RequestError as exc:
+            raise MCPError(f"mcp-server unreachable: {exc}") from exc
+
+        if resp.status_code != 200:
+            raise MCPError(
+                f"mcp-server returned HTTP {resp.status_code}: {resp.text[:200]}",
+                status_code=resp.status_code,
+            )
+        return resp.json()
+
+    async def get_env_vars(self) -> list[dict]:
+        """Fetch mcp-server's own Jira/GitHub/web-search env var state.
+
+        Never includes secrets in full — see mcp-server's Registry.EnvVars.
+        """
+        return await self._get("/config/env")
+
+    async def set_env_var(self, key: str, value: str) -> None:
+        """Write one Jira/GitHub/web-search env var. The value is forwarded
+        as-is to mcp-server and never persisted or logged by this service —
+        mcp-server is the only process that owns these credentials.
+        """
+        await self._put("/config/env", {"key": key, "value": value})

@@ -1,4 +1,4 @@
-import { IconCheck, IconAlert, IconLoader } from '../icons.jsx';
+import { IconCheck, IconAlert } from '../icons.jsx';
 
 const SERVICE_LABELS = {
   ollama: 'Ollama',
@@ -14,7 +14,7 @@ const DOCS_LINKS = {
   mcp_server: 'https://github.com',
 };
 
-export default function ServiceStatusRow({ service, info, fix, onFix, extraActions, testIdPrefix = 'wizard' }) {
+export default function ServiceStatusRow({ service, info, extraActions, testIdPrefix = 'wizard' }) {
   const label = SERVICE_LABELS[service] || service;
 
   return (
@@ -33,30 +33,12 @@ export default function ServiceStatusRow({ service, info, fix, onFix, extraActio
           <span className="wizard-status-badge optional">optional</span>
         )}
         {extraActions}
-        {info.status !== 'ok' && !fix?.failed && (
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={onFix}
-            disabled={fix?.fixing}
-            data-testid={`${testIdPrefix}-fix-${service}`}
-          >
-            {fix?.fixing ? <><IconLoader className="spin" /> Fixing...</> : 'Fix'}
-          </button>
-        )}
-        {fix?.failed && (
+        {info.status !== 'ok' && (
           <a href={DOCS_LINKS[service]} target="_blank" rel="noreferrer" className="wizard-link">
             Manual fix instructions
           </a>
         )}
       </div>
-      {fix?.log?.length > 0 && (
-        <details className="wizard-fix-log">
-          <summary>View log</summary>
-          {fix.log.map((line, i) => (
-            <div key={i} className="wizard-fix-log-line">{line}</div>
-          ))}
-        </details>
-      )}
     </div>
   );
 }

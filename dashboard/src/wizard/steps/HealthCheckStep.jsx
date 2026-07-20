@@ -3,7 +3,7 @@ import { useHealthChecks } from '../../shared/useHealthChecks.js';
 import ServiceStatusRow from '../../shared/ServiceStatusRow.jsx';
 
 export default function HealthCheckStep({ health, onHealthChange }) {
-  const { checking, checkError, fixState, runCheck, handleFix } = useHealthChecks(health, onHealthChange);
+  const { checking, checkError, runCheck } = useHealthChecks(health, onHealthChange);
 
   return (
     <div>
@@ -30,13 +30,7 @@ export default function HealthCheckStep({ health, onHealthChange }) {
       )}
 
       {health && Object.entries(health).map(([service, info]) => (
-        <ServiceStatusRow
-          key={service}
-          service={service}
-          info={info}
-          fix={fixState[service]}
-          onFix={() => handleFix(service)}
-        />
+        <ServiceStatusRow key={service} service={service} info={info} />
       ))}
 
       {health && (

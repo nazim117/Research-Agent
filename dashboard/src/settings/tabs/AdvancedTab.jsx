@@ -1,54 +1,30 @@
 import { useEffect, useState } from 'react';
 import * as api from '../../api.js';
-import { IconEye, IconEyeOff, IconLoader } from '../../icons.jsx';
-
-function EnvVarRow({ envVar, draft, revealed, onToggleReveal, onChange, onSave, saving }) {
-  const dirty = draft !== undefined && draft !== envVar.value;
-  const displayValue = draft !== undefined ? draft : envVar.value;
-  const inputType = envVar.secret && !revealed ? 'password' : 'text';
-
-  return (
-    <div className="settings-envvar-row" data-testid={`settings-envvar-${envVar.key}`}>
-      <span className="settings-envvar-key">{envVar.key}</span>
-      <input
-        className="input settings-envvar-value"
-        type={inputType}
-        value={displayValue}
-        onChange={(e) => onChange(envVar.key, e.target.value)}
-        placeholder={envVar.secret ? '(not set)' : ''}
-      />
-      <div className="settings-envvar-actions">
-        {envVar.secret && (
-          <button
-            className="icon-btn"
-            onClick={() => onToggleReveal(envVar.key)}
-            aria-label={revealed ? 'Hide value' : 'Reveal value'}
-            title={revealed ? 'Hide value' : 'Reveal value'}
-          >
-            {revealed ? <IconEyeOff /> : <IconEye />}
-          </button>
-        )}
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={() => onSave(envVar.key)}
-          disabled={!dirty || saving}
-        >
-          {saving ? <IconLoader className="spin" /> : 'Save'}
-        </button>
-      </div>
-    </div>
-  );
-}
+import { IconLoader, IconRefresh } from '../../icons.jsx';
+import EnvVarRow from '../../shared/EnvVarRow.jsx';
+import { maskHint } from '../../shared/maskHint.js';
 
 export default function AdvancedTab({ onDirtyChange, setToast }) {
   const [envVars, setEnvVars] = useState(null);
+  const [mcpError, setMcpError] = useState(null);
   const [edits, setEdits] = useState({}); // { [key]: draftValue }
-  const [revealed, setRevealed] = useState({}); // { [key]: bool }
   const [savingKey, setSavingKey] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    api.listEnvVars().then(setEnvVars);
-  }, []);
+  function load() {
+    setLoading(true);
+    setLoadError(null);
+    api.listEnvVars()
+      .then(({ vars, mcp_error }) => {
+        setEnvVars(vars);
+        setMcpError(mcp_error);
+      })
+      .catch((err) => setLoadError(err.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(load, []);
 
   useEffect(() => {
     onDirtyChange(Object.keys(edits).length > 0);
@@ -58,15 +34,18 @@ export default function AdvancedTab({ onDirtyChange, setToast }) {
     setEdits((e) => ({ ...e, [key]: value }));
   }
 
-  function handleToggleReveal(key) {
-    setRevealed((r) => ({ ...r, [key]: !r[key] }));
-  }
-
   async function handleSave(key) {
     setSavingKey(key);
     try {
-      await api.updateEnvVar(key, edits[key]);
-      setEnvVars((vars) => vars.map((v) => (v.key === key ? { ...v, value: edits[key] } : v)));
+      const value = edits[key];
+      await api.updateEnvVar(key, value);
+      setEnvVars((vars) =>
+        vars.map((v) =>
+          v.key === key
+            ? { ...v, configured: value !== '', hint: v.secret ? maskHint(value) : value }
+            : v
+        )
+      );
       setEdits((e) => {
         const next = { ...e };
         delete next[key];
@@ -83,20 +62,33 @@ export default function AdvancedTab({ onDirtyChange, setToast }) {
   return (
     <div className="settings-section">
       <div className="wizard-warning" data-testid="settings-advanced-banner">
-        These aren't wired to a real backend yet — environment variables are managed via your
-        <code> .env</code> file today, and any service that reads one needs a restart to pick up
-        a change. Edits here don't persist.
+        Changes here are written to your <code>.env</code> file immediately, but the
+        affected service needs a restart to pick them up. Secret values are never sent back
+        to this page — only whether they're configured.
       </div>
 
-      {!envVars && <p className="no-data">Loading...</p>}
+      {loadError && (
+        <div>
+          <p className="no-data">Failed to load: {loadError}</p>
+          <button className="btn btn-secondary btn-sm mt-8" onClick={load} disabled={loading}>
+            {loading ? <><IconLoader className="spin" /> Retrying...</> : <><IconRefresh /> Retry</>}
+          </button>
+        </div>
+      )}
+      {!envVars && !loadError && <p className="no-data">Loading...</p>}
+
+      {mcpError && (
+        <div className="wizard-warning mt-8" data-testid="settings-advanced-mcp-error">
+          Couldn't reach mcp-server — Jira/GitHub/web-search settings are unavailable until
+          it's back: {mcpError}
+        </div>
+      )}
 
       {envVars && envVars.map((v) => (
         <EnvVarRow
           key={v.key}
           envVar={v}
           draft={edits[v.key]}
-          revealed={Boolean(revealed[v.key])}
-          onToggleReveal={handleToggleReveal}
           onChange={handleChange}
           onSave={handleSave}
           saving={savingKey === v.key}

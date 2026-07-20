@@ -35,11 +35,6 @@
   margin-bottom: 10px;
 }
 
-.settings-rail-footer {
-  margin-top: auto; padding-top: 16px;
-  border-top: 1px solid var(--border-subtle);
-}
-
 /* .wizard-rail-step is a <li> in the wizard rail (not clickable); the
    settings rail reuses it on a <button> instead, so reset button chrome
    while keeping the shared color/spacing rules. */

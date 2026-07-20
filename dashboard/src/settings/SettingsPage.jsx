@@ -20,7 +20,7 @@ const TAB_TITLES = {
   marketplace: 'Marketplace',
 };
 
-export default function SettingsPage({ onClose, onOpenWizard, projects, activeId, onSelectProject, onRefreshProjects, setToast }) {
+export default function SettingsPage({ onClose, projects, activeId, onSelectProject, onRefreshProjects, setToast }) {
   const [activeTab, setActiveTab] = useLocalStorageState('settingsTab', 'general');
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
@@ -41,14 +41,10 @@ export default function SettingsPage({ onClose, onOpenWizard, projects, activeId
     guardedNavigate(onClose);
   }
 
-  function handleRerunWizard() {
-    guardedNavigate(onOpenWizard);
-  }
-
   return (
     <div className="settings-overlay" data-testid="settings-page">
       <div className="wizard-topbar">
-        <span className="wizard-logo">◆ Research Agent — Settings</span>
+        <span className="wizard-logo">Settings</span>
         <div className="wizard-topbar-actions">
           <button className="icon-btn" onClick={handleClose} aria-label="Close settings" data-testid="settings-close">
             <IconX /> Close
@@ -57,7 +53,7 @@ export default function SettingsPage({ onClose, onOpenWizard, projects, activeId
       </div>
 
       <div className="settings-body">
-        <SettingsRail activeTab={activeTab} onSelectTab={handleSelectTab} onRerunWizard={handleRerunWizard} />
+        <SettingsRail activeTab={activeTab} onSelectTab={handleSelectTab} />
 
         <div className="settings-content">
           <div className="settings-tab-scroll">
@@ -79,7 +75,9 @@ export default function SettingsPage({ onClose, onOpenWizard, projects, activeId
             )}
             {activeTab === 'llm-models' && <LlmModelsTab />}
             {activeTab === 'embeddings' && <EmbeddingsTab />}
-            {activeTab === 'integrations' && <IntegrationsTab />}
+            {activeTab === 'integrations' && (
+              <IntegrationsTab onGoToAdvanced={() => handleSelectTab('advanced')} />
+            )}
             {activeTab === 'advanced' && <AdvancedTab onDirtyChange={setHasUnsavedChanges} setToast={setToast} />}
             {activeTab === 'marketplace' && <MarketplaceTab />}
           </div>

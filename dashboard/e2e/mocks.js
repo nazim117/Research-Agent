@@ -112,6 +112,9 @@ export async function mockApi(page, overrides = {}) {
     if (method === 'POST' && path === '/chat') {
       return respond(overrides.chat ?? FIXTURES.chatReply);
     }
+    if (method === 'GET' && /\/history$/.test(path)) {
+      return respond(overrides.history ?? []);
+    }
 
     // ── Sources / ingest ─────────────────────────────────────────────────────
     if (method === 'GET' && /\/sources$/.test(path)) {

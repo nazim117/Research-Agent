@@ -568,6 +568,11 @@ svg[aria-hidden="true"] { display: inline-block; vertical-align: -0.15em; flex-s
 .ml-4 { margin-left: 4px; }
 .ml-auto { margin-left: auto; }
 .input-sm { width: 160px; font-size: 12px; padding: 4px 8px; }
+.link-btn {
+  background: none; border: none; padding: 0; margin: 0;
+  color: var(--accent); font: inherit; font-size: inherit;
+  cursor: pointer; text-decoration: underline;
+}
 .visually-hidden-input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
 /* ─── Transcript tab (Step 10) ──────────────────────────────── */

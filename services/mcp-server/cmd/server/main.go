@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -36,6 +37,44 @@ func findEnvFile() string {
 		}
 		dir = parent
 	}
+}
+
+// allowedDashboardOrigins parses the DASHBOARD_ORIGIN env var (comma-separated),
+// defaulting to the Vite dev server's origin — this repo's dashboard always
+// runs via `npm run dev`, not the broken Docker Compose nginx service.
+func allowedDashboardOrigins() []string {
+	raw := os.Getenv("DASHBOARD_ORIGIN")
+	if raw == "" {
+		raw = "http://localhost:5173"
+	}
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			origins = append(origins, p)
+		}
+	}
+	return origins
+}
+
+// checkOrigin guards routes that read or write credentials. corsMiddleware
+// answers CORS preflights for the whole API with a wildcard (needed because
+// the Chrome extension's origin ID changes every reload), so it can't be
+// used to gate sensitive routes — this is a narrower, explicit allowlist
+// check instead. Requests with no Origin header (server-to-server calls,
+// curl, tests) are allowed through; only a present-but-unrecognized Origin
+// is rejected.
+func checkOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	for _, allowed := range allowedDashboardOrigins() {
+		if origin == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -178,6 +217,39 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(registry.IntegrationsStatus())
+	})
+
+	// GET /config/env — Jira/GitHub/web-search env var state for the dashboard's
+	// Advanced settings tab. Secrets are never returned in full — see
+	// tools.Registry.EnvVars. Gated by checkOrigin since it reveals whether
+	// credentials are configured (and a masked hint), not just a boolean.
+	mux.HandleFunc("/config/env", func(w http.ResponseWriter, r *http.Request) {
+		if !checkOrigin(r) {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(registry.EnvVars())
+		case http.MethodPut:
+			var body struct {
+				Key   string `json:"key"`
+				Value string `json:"value"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := registry.SetEnvVar(body.Key, body.Value, findEnvFile()); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	})
 
 	log.Printf("MCP server listening on :%s (tools: %d)", port, len(registry.Definitions()))

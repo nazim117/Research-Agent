@@ -22,10 +22,11 @@
 
 import json
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -41,6 +42,7 @@ from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, val
 from config import settings
 from document_state import DocumentStateStore
 from embeddings import embed
+import env_config
 from health import check_detailed_health
 from mcp_client import MCPClient, MCPError
 from llm import chat, validate_llm_config
@@ -172,6 +174,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _check_origin(request: Request) -> None:
+    """Guard for routes that read or write credentials.
+
+    CORSMiddleware above is wildcard-open (needed for the Chrome extension's
+    ever-changing origin ID — see the comment above it), so it can't be used
+    to gate sensitive routes. This is a narrower, explicit allowlist check
+    instead: requests with no Origin header (server-to-server calls, curl,
+    tests) are allowed through; only a present-but-unrecognized Origin is
+    rejected. Mirrors mcp-server's checkOrigin (cmd/server/main.go).
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    allowed_raw = os.environ.get("DASHBOARD_ORIGIN", "http://localhost:5173")
+    allowed = {o.strip() for o in allowed_raw.split(",") if o.strip()}
+    if origin not in allowed:
+        raise HTTPException(status_code=403, detail="origin not allowed")
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -482,6 +503,53 @@ async def get_integrations_status():
         return await _mcp.get_integrations_status()
     except MCPError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+class EnvVarUpdateRequest(BaseModel):
+    value: str
+
+
+@app.get("/config/env", dependencies=[Depends(_check_origin)])
+async def get_config_env():
+    """Combined env var state for the Settings UI's Advanced tab: this
+    service's own vars plus mcp-server's (proxied). Secrets are never
+    returned in full — see env_config.list_env_vars and mcp-server's
+    Registry.EnvVars.
+
+    mcp-server's portion is an independent, separately-failable probe —
+    same principle as health.check_detailed_health's per-dependency
+    isolation — so an unreachable mcp-server never blocks display/editing
+    of this service's own vars (OPENAI_API_KEY, LLM_PROVIDER, ...), which
+    have nothing to do with it.
+    """
+    local_vars = env_config.list_env_vars()
+    try:
+        remote_vars = await _mcp.get_env_vars()
+        mcp_error = None
+    except MCPError as exc:
+        remote_vars = []
+        mcp_error = str(exc)
+    return {"vars": local_vars + remote_vars, "mcp_error": mcp_error}
+
+
+@app.put("/config/env/{key}", dependencies=[Depends(_check_origin)])
+async def put_config_env(key: str, req: EnvVarUpdateRequest):
+    """Write one env var. Keys owned by this service are written locally;
+    everything else is proxied to mcp-server, the only process allowed to
+    hold Jira/GitHub/web-search credentials — this service never persists
+    or logs those values, only forwards them.
+    """
+    if key in env_config.OWNED_KEYS:
+        try:
+            env_config.set_env_var(key, req.value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        try:
+            await _mcp.set_env_var(key, req.value)
+        except MCPError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 # Routes — project CRUD

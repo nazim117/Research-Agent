@@ -1,10 +1,19 @@
-export default function ProjectStep({ project, credentials, onProjectChange }) {
+import { useEffect, useState } from 'react';
+import * as api from '../../api.js';
+
+export default function ProjectStep({ project, onProjectChange }) {
+  const [integrations, setIntegrations] = useState(null);
+
+  useEffect(() => {
+    api.getIntegrationStatus().then(setIntegrations).catch(() => setIntegrations(null));
+  }, []);
+
   function set(field, value) {
     onProjectChange({ ...project, [field]: value });
   }
 
-  const hasJira = Boolean(credentials.jiraUrl && credentials.jiraToken);
-  const hasGitHub = Boolean(credentials.githubToken);
+  const hasJira = Boolean(integrations?.jira?.configured);
+  const hasGitHub = Boolean(integrations?.github?.configured);
 
   return (
     <div>

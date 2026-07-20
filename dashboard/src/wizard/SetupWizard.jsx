@@ -20,7 +20,6 @@ const DEFAULT_PROGRESS = {
   completedSteps: [],
   health: null,
   models: { chat: null, embed: null },
-  credentials: { jiraUrl: '', jiraToken: '', githubToken: '' },
   project: { name: '', jiraKey: '', githubRepo: '' },
 };
 
@@ -148,17 +147,11 @@ export default function SetupWizard({ onExit, onProjectCreated }) {
       />
     );
   } else if (progress.step === 'credentials') {
-    stepContent = (
-      <CredentialsStep
-        credentials={progress.credentials}
-        onCredentialsChange={(credentials) => setProgress((p) => ({ ...p, credentials }))}
-      />
-    );
+    stepContent = <CredentialsStep />;
   } else if (progress.step === 'project') {
     stepContent = (
       <ProjectStep
         project={progress.project}
-        credentials={progress.credentials}
         onProjectChange={(project) => setProgress((p) => ({ ...p, project }))}
       />
     );

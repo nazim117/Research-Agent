@@ -17,7 +17,7 @@ const GROUPS = [
   },
 ];
 
-export default function SettingsRail({ activeTab, onSelectTab, onRerunWizard }) {
+export default function SettingsRail({ activeTab, onSelectTab }) {
   return (
     <nav className="settings-rail" aria-label="Settings sections">
       {GROUPS.map((group) => (
@@ -43,12 +43,6 @@ export default function SettingsRail({ activeTab, onSelectTab, onRerunWizard }) 
           </ul>
         </div>
       ))}
-
-      <div className="settings-rail-footer">
-        <button type="button" className="wizard-link" onClick={onRerunWizard} data-testid="settings-rerun-wizard">
-          Re-run setup wizard →
-        </button>
-      </div>
     </nav>
   );
 }

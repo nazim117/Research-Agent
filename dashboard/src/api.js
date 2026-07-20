@@ -85,26 +85,9 @@ export const ingestUrl = (projectId, url, kind) =>
 
 // ─── Setup wizard / Settings — system health, models, config ────────────
 // Backed by real endpoints added to chat-agent (health.py, ollama_models.py,
-// GET /config) and mcp-server (GET /integrations/status). See TODO(backend)
-// notes below for what's still stubbed (nothing here reads/writes secrets,
-// and nothing controls services — see fixService/controlService/env vars).
-
-const fakeDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// GET /config) and mcp-server (GET /integrations/status).
 
 export const checkSystemHealth = () => request('GET', '/health/detailed');
-
-// TODO(backend): replace with a real fix action (e.g. `docker compose up -d`,
-// or an OS-level service restart) exposed via a future admin endpoint.
-export async function fixService(serviceName) {
-  await fakeDelay(1200);
-  return {
-    success: true,
-    log: [
-      `Attempting to start ${serviceName}...`,
-      `${serviceName} responded after restart.`,
-    ],
-  };
-}
 
 export const listLocalModels = () => request('GET', '/models');
 
@@ -153,22 +136,6 @@ export async function pullModel(modelName, onProgress) {
   return { ok: true };
 }
 
-// TODO(backend): replace with a real Jira connection test, proxied through
-// mcp-server (the only process allowed to hold JIRA_* credentials).
-export async function testJiraConnection({ url, token }) {
-  await fakeDelay(600);
-  if (!url || !token) return { ok: false, message: 'URL and token are required.' };
-  return { ok: true, message: 'Connected successfully.' };
-}
-
-// TODO(backend): replace with a real GitHub connection test, proxied
-// through mcp-server (the only process allowed to hold GITHUB_TOKEN).
-export async function testGitHubConnection({ token }) {
-  await fakeDelay(600);
-  if (!token) return { ok: false, message: 'Token is required.' };
-  return { ok: true, message: 'Connected successfully.' };
-}
-
 export const getLlmConfig = () => request('GET', '/config');
 
 // Lightweight reachability check reused by both the LLM Models and
@@ -183,45 +150,19 @@ export async function testOllamaConnection() {
 
 export const getIntegrationStatus = () => request('GET', '/integrations/status');
 
-// TODO(backend): replace with a real start/stop/restart action. No process
-// control endpoint exists on chat-agent or mcp-server today; docker-compose.yml
-// is a static dev file, not something the app can invoke.
-export async function controlService(serviceName, action) {
-  await fakeDelay(1000);
-  return {
-    success: true,
-    log: [`${action}: ${serviceName}...`, `${serviceName} ${action} completed.`],
-  };
-}
-
-// TODO(backend): replace with a real settings/env read endpoint. Key names
-// mirror .env.example; values below are illustrative placeholders, not real
-// user data (there is nothing real to read yet).
+// Env vars owned by chat-agent and mcp-server (proxied), merged into one
+// list. Secret values are never returned in full — only `configured` +
+// a masked `hint` (see services/chat-agent/env_config.py and
+// services/mcp-server/internal/tools/registry.go's EnvVars/EnvVarOut).
+// `mcp_error` is set (and mcp-server's vars omitted) when mcp-server is
+// unreachable — this service's own vars are still returned, never blocked
+// by that unrelated dependency being down.
 export async function listEnvVars() {
-  await fakeDelay(300);
-  return [
-    { key: 'LLM_PROVIDER', value: 'ollama', secret: false },
-    { key: 'OLLAMA_CHAT_MODEL', value: 'llama3', secret: false },
-    { key: 'OPENAI_BASE_URL', value: '', secret: false },
-    { key: 'OPENAI_API_KEY', value: '', secret: true },
-    { key: 'OPENAI_MODEL', value: '', secret: false },
-    { key: 'OPENAI_PROVIDER_LABEL', value: '', secret: false },
-    { key: 'OLLAMA_BASE_URL', value: 'http://localhost:11434', secret: false },
-    { key: 'OLLAMA_EMBED_MODEL', value: 'nomic-embed-text', secret: false },
-    { key: 'QDRANT_URL', value: 'http://localhost:6333', secret: false },
-    { key: 'JIRA_BASE_URL', value: '', secret: false },
-    { key: 'JIRA_EMAIL', value: '', secret: false },
-    { key: 'JIRA_API_TOKEN', value: '', secret: true },
-    { key: 'GITHUB_TOKEN', value: '', secret: true },
-    { key: 'BRAVE_SEARCH_API_KEY', value: '', secret: true },
-    { key: 'MCP_BASE_URL', value: 'http://localhost:8083', secret: false },
-  ];
+  return request('GET', '/config/env');
 }
 
-// TODO(backend): replace with a real settings/env write endpoint. Faking
-// success here doesn't persist anything — the Advanced tab's banner makes
-// that explicit to the user.
+// Write-only: the server never echoes the value back. `value` is the new
+// value to persist; secrets are forwarded and stored, never re-displayed.
 export async function updateEnvVar(key, value) {
-  await fakeDelay(400);
-  return { ok: true, key, value };
+  return request('PUT', `/config/env/${encodeURIComponent(key)}`, { value });
 }
