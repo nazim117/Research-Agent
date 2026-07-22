@@ -47,6 +47,8 @@ config/secrets.yml
 *.json
 # Allow the detect-secrets baseline (it's a JSON file, not a secret)
 !.secrets.baseline
+# Allow the shared "Run All" dev task (no secrets, just task definitions)
+!.vscode/tasks.json
 # Other common sensitive files
 *.pem
 *.crt

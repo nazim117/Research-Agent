@@ -131,6 +131,15 @@ class MCPClient:
         """Check mcp-server's own liveness. Raises MCPError if unreachable."""
         return await self._get("/health")
 
+    async def get_web_search_status(self) -> dict:
+        """Which web-search backend mcp-server is configured to use, and (for
+        SearXNG) whether it's actually reachable right now — see
+        internal/tools/web.go's dispatch order and this endpoint's
+        `web_search` field. Raises MCPError if mcp-server itself is unreachable.
+        """
+        health = await self._get("/health")
+        return health.get("web_search", {})
+
     async def get_integrations_status(self) -> dict:
         """Fetch Jira/GitHub configured status from mcp-server.
 

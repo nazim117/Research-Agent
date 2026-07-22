@@ -7,8 +7,12 @@ services:
       - "8083:8083"
     # Load PM credentials from the repo-root .env so the chat-agent never
     # reads them directly.  JIRA_* and GITHUB_TOKEN stay on this service.
+    # required: false — a fresh clone has no .env yet (only .env.example),
+    # and everything here has a working default without it; don't hard-fail
+    # docker compose up over a file that's genuinely optional.
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - PORT=8083
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
@@ -32,8 +36,10 @@ services:
     build: ./services/chat-agent
     ports:
       - "8080:8080"
+    # required: false — see mcp-server's identical comment above.
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       - PORT=8080
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}

@@ -77,6 +77,40 @@ func checkOrigin(r *http.Request) bool {
 	return false
 }
 
+// webSearchHealth reports which web_search backend is active (see
+// internal/tools/web.go's dispatch order) so the dashboard can show whether
+// the agent's web-search toggle will actually work, instead of the user
+// only finding out when a chat search silently fails.
+type webSearchHealth struct {
+	Backend    string `json:"backend"`             // "searxng" | "brave" | "duckduckgo"
+	Configured bool   `json:"configured"`          // false only for the no-key duckduckgo fallback
+	Reachable  *bool  `json:"reachable,omitempty"` // only probed (and set) for searxng
+}
+
+func checkWebSearchBackend() webSearchHealth {
+	if base := os.Getenv("SEARXNG_BASE_URL"); base != "" {
+		reachable := probeReachable(base)
+		return webSearchHealth{Backend: "searxng", Configured: true, Reachable: &reachable}
+	}
+	if os.Getenv("BRAVE_SEARCH_API_KEY") != "" {
+		return webSearchHealth{Backend: "brave", Configured: true}
+	}
+	return webSearchHealth{Backend: "duckduckgo", Configured: false}
+}
+
+// probeReachable does a cheap GET against the base URL's root — SearXNG
+// always serves its search UI there, so any non-5xx response means the
+// instance is up.
+func probeReachable(baseURL string) bool {
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(strings.TrimSuffix(baseURL, "/") + "/")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode < 500
+}
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -202,10 +236,15 @@ func main() {
 	// Prometheus scrapes this from inside the Docker network at mcp-server:8083/metrics.
 	mux.Handle("/metrics", observability.Handler())
 
-	// GET /health
+	// GET /health — also reports which web_search backend is active (see
+	// checkWebSearchBackend) so chat-agent's aggregate health check can warn
+	// the dashboard before a chat-time search silently fails.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":     "healthy",
+			"web_search": checkWebSearchBackend(),
+		})
 	})
 
 	// GET /integrations/status — Jira/GitHub configured state for the dashboard.

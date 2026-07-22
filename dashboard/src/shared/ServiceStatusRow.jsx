@@ -6,6 +6,7 @@ const SERVICE_LABELS = {
   embeddings: 'Embeddings',
   docker: 'Docker',
   mcp_server: 'mcp-server',
+  web_search: 'Web search',
 };
 
 const DOCS_LINKS = {
@@ -14,6 +15,7 @@ const DOCS_LINKS = {
   embeddings: 'https://github.com/huggingface/text-embeddings-inference',
   docker: 'https://docs.docker.com/desktop/',
   mcp_server: 'https://github.com',
+  web_search: 'https://docs.searxng.org/admin/installation-docker.html',
 };
 
 export default function ServiceStatusRow({ service, info, extraActions, testIdPrefix = 'wizard' }) {

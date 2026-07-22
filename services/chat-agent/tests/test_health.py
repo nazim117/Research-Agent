@@ -52,12 +52,17 @@ def _settings():
     )
 
 
-def _mcp(healthy: bool = True):
+def _mcp(healthy: bool = True, web_search_status: dict | None = None):
     mcp = AsyncMock()
     if healthy:
         mcp.get_health = AsyncMock(return_value={"status": "healthy"})
     else:
         mcp.get_health = AsyncMock(side_effect=Exception("mcp-server unreachable"))
+    mcp.get_web_search_status = AsyncMock(
+        return_value=web_search_status
+        if web_search_status is not None
+        else {"backend": "duckduckgo", "configured": False}
+    )
     return mcp
 
 
@@ -78,6 +83,8 @@ async def test_all_healthy():
     assert result["docker"]["required"] is False
     assert result["mcp_server"]["status"] == "ok"
     assert result["mcp_server"]["required"] is False
+    assert result["web_search"]["status"] == "ok"
+    assert result["web_search"]["required"] is False
 
 
 @pytest.mark.asyncio
@@ -146,3 +153,54 @@ async def test_mcp_server_down_is_optional_failure():
     assert result["ollama"]["status"] == "ok"
     assert result["qdrant"]["status"] == "ok"
     assert result["embeddings"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_web_search_reports_searxng_reachable():
+    with (
+        patch("health.httpx.AsyncClient", side_effect=lambda **kw: _FakeAsyncClient(_make_get_impl())),
+        patch("health.subprocess.run", return_value=MagicMock(returncode=0, stdout="24.0.0\n")),
+    ):
+        mcp = _mcp(web_search_status={"backend": "searxng", "configured": True, "reachable": True})
+        result = await check_detailed_health(_settings(), mcp)
+
+    assert result["web_search"] == {"status": "ok", "detail": "SearXNG reachable", "required": False}
+
+
+@pytest.mark.asyncio
+async def test_web_search_reports_searxng_configured_but_unreachable():
+    with (
+        patch("health.httpx.AsyncClient", side_effect=lambda **kw: _FakeAsyncClient(_make_get_impl())),
+        patch("health.subprocess.run", return_value=MagicMock(returncode=0, stdout="24.0.0\n")),
+    ):
+        mcp = _mcp(web_search_status={"backend": "searxng", "configured": True, "reachable": False})
+        result = await check_detailed_health(_settings(), mcp)
+
+    assert result["web_search"]["status"] == "error"
+    assert "unreachable" in result["web_search"]["detail"]
+    assert result["web_search"]["required"] is False
+
+
+@pytest.mark.asyncio
+async def test_web_search_reports_brave_configured():
+    with (
+        patch("health.httpx.AsyncClient", side_effect=lambda **kw: _FakeAsyncClient(_make_get_impl())),
+        patch("health.subprocess.run", return_value=MagicMock(returncode=0, stdout="24.0.0\n")),
+    ):
+        mcp = _mcp(web_search_status={"backend": "brave", "configured": True})
+        result = await check_detailed_health(_settings(), mcp)
+
+    assert result["web_search"] == {"status": "ok", "detail": "using brave", "required": False}
+
+
+@pytest.mark.asyncio
+async def test_web_search_falls_back_to_duckduckgo_when_unconfigured():
+    with (
+        patch("health.httpx.AsyncClient", side_effect=lambda **kw: _FakeAsyncClient(_make_get_impl())),
+        patch("health.subprocess.run", return_value=MagicMock(returncode=0, stdout="24.0.0\n")),
+    ):
+        mcp = _mcp(web_search_status={"backend": "duckduckgo", "configured": False})
+        result = await check_detailed_health(_settings(), mcp)
+
+    assert result["web_search"]["status"] == "ok"
+    assert "duckduckgo" in result["web_search"]["detail"]

@@ -1,0 +1,79 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "chat-agent: run",
+      "type": "shell",
+      "command": "${workspaceFolder}/services/chat-agent/.venv/Scripts/uvicorn.exe",
+      "args": ["main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"],
+      "options": {
+        "cwd": "${workspaceFolder}/services/chat-agent"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "group": "stack",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "mcp-server: run",
+      "type": "shell",
+      "command": "go",
+      "args": ["run", "./cmd/server"],
+      "options": {
+        "cwd": "${workspaceFolder}/services/mcp-server"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "group": "stack",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "dashboard: dev",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "options": {
+        "cwd": "${workspaceFolder}/dashboard"
+      },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "group": "stack",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "infra: docker (qdrant, embeddings, searxng)",
+      "type": "shell",
+      "command": "docker",
+      "args": ["compose", "up", "qdrant", "embeddings", "searxng", "-d"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "panel": "dedicated",
+        "group": "stack",
+        "reveal": "always"
+      }
+    },
+    {
+      "label": "Run All: Project Brain stack",
+      "dependsOn": [
+        "infra: docker (qdrant, embeddings, searxng)",
+        "chat-agent: run",
+        "mcp-server: run",
+        "dashboard: dev"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -19,14 +19,19 @@ system is the stack described below.
 | chat-agent | `services/chat-agent/` | Python / FastAPI | 8080 |
 | mcp-server | `services/mcp-server/` | Go | 8083 |
 | qdrant | Docker image `qdrant/qdrant` | — | 6333 |
+| embeddings | Docker image `ghcr.io/huggingface/text-embeddings-inference` | — | 8082 |
+| searxng | Docker image `searxng/searxng` | — | 8085 |
 | dashboard | `dashboard/` | React / Vite | 5173 (dev) |
 | extension | `extension/` | Chrome MV3 side panel | — |
-| ollama | host service | — | 11434 |
+| ollama | host service (optional — local chat only, not embeddings) | — | 11434 |
 
-`docker-compose.yml` only defines `mcp-server`, `dashboard`, `chat-agent`, and
-`qdrant` — there is no legacy service to accidentally start anymore, but the
-`dashboard` compose service still has a broken `nginx.conf`; always run the
-dashboard with `npm run dev`, not via Docker Compose.
+`docker-compose.yml` defines `mcp-server`, `dashboard`, `chat-agent`, `qdrant`,
+`embeddings`, and `searxng` — there is no legacy service to accidentally start
+anymore, but the `dashboard` compose service still has a broken `nginx.conf`;
+always run the dashboard with `npm run dev`, not via Docker Compose.
+`chat-agent`/`mcp-server`'s `env_file: .env` is `required: false` — a fresh
+clone with no `.env` (only `.env.example`) still starts fine, since every var
+has a working default.
 
 ## Commands
 
@@ -79,9 +84,9 @@ npm run test:e2e:ui
 ### Local infra
 
 ```bash
-docker compose up qdrant mcp-server -d   # start only what's needed; mcp-server holds Jira/GitHub creds
-ollama pull nomic-embed-text             # required embedding model
-ollama pull llama3                       # only if LLM_PROVIDER=ollama
+cp .env.example .env                                    # first time only; every var has a working default
+docker compose up qdrant embeddings searxng mcp-server -d  # start what's needed; mcp-server holds Jira/GitHub creds
+ollama pull llama3                                       # only if LLM_PROVIDER=ollama (embeddings need no pull — TEI handles its own model)
 ```
 
 ## Architecture
@@ -109,18 +114,50 @@ data across projects.
 ### Request flow for `POST /chat` (`main.py`)
 
 1. Load recent history from SQLite (`memory.py`), scoped by `project_id` + `session_id`.
-2. Embed the user message (`embeddings.py`, via Ollama) and search Qdrant
-   `conversations` (memory) and `documents` (RAG), both filtered by `project_id`.
+2. Embed the user message (`embeddings.py`, via the bundled embeddings
+   service — Hugging Face Text Embeddings Inference, `EMBEDDINGS_BASE_URL`,
+   not Ollama) and search Qdrant `conversations` (memory) and `documents`
+   (RAG), both filtered by `project_id`.
 3. If the message names a Jira/GitHub key explicitly (regex match), pin those
    chunks by exact source label in addition to semantic search — semantic
    search alone misses action-oriented queries like "comment on KAN-8".
-4. Build the prompt (doc chunks → memory hits → recent history → user message)
-   and call the configured LLM backend (`llm.py`: `ollama` or
-   `openai_compatible`, fixed by the `LLM_PROVIDER` env var at deploy time).
-5. If the reply contains a `<<DRAFT_ACTION>>{...}<<END>>` block, parse it and
+4. If the request has `web_search: true` (a UI toggle — the LLM never decides
+   this itself), call mcp-server's `web_search` tool and fold results into
+   the prompt as another citation-numbered context block, same mechanism as
+   doc chunks. Degrades gracefully (a note in the prompt, not a 500) if the
+   search backend is unreachable.
+5. Build the prompt (doc chunks → web results → memory hits → recent history
+   → user message) and call the configured LLM backend (`llm.py`: `ollama`
+   or `openai_compatible`, fixed by the `LLM_PROVIDER` env var at deploy
+   time — `openai_compatible` covers OpenAI, Claude via Anthropic's own
+   OpenAI-compatible endpoint, Grok, Groq, DeepSeek, or any other
+   OpenAI-compatible API, distinguished only by `OPENAI_BASE_URL`).
+6. If the reply contains a `<<DRAFT_ACTION>>{...}<<END>>` block, parse it and
    create a pending row in `actions.py` instead of executing anything —
    external writes always require human approval via
    `POST /actions/{id}/approve`, which calls through `mcp_client.py`.
+
+### Settings & Setup Wizard (`dashboard/src/settings/`, `dashboard/src/wizard/`)
+
+The dashboard has a first-run Setup Wizard and an ongoing Settings page, both
+backed by real endpoints (not stubs) added to `main.py`: `GET /health/detailed`,
+`GET /models` + `POST /models/pull` (Ollama model management), `GET /config`
+(read-only effective LLM/embeddings config, never secrets), `GET /integrations/status`
+(Jira/GitHub configured state, proxied from mcp-server), and `GET`/`PUT
+/config/env[/​{key}]` (env var read/write). The env-var endpoints are
+**write-only for secrets** — a value is never echoed back, only
+`configured: bool` + a masked hint — and are origin-checked
+(`DASHBOARD_ORIGIN`, default `http://localhost:5173`) since chat-agent's
+general CORS policy is deliberately wide open (needed for the Chrome
+extension's ever-changing origin) and can't be used to gate credential
+routes. `services/chat-agent/env_config.py` holds chat-agent's own
+allowlisted vars (`LLM_PROVIDER`, `OLLAMA_*`, `OPENAI_*`); mcp-server's
+equivalent (`internal/tools/registry.go`'s `envVarAllowlist`) holds
+`JIRA_*`/`GITHUB_TOKEN`/`BRAVE_SEARCH_API_KEY`/`SEARXNG_BASE_URL` — chat-agent
+proxies writes to mcp-server for those, never storing them itself. Fake
+"Fix"/service-restart/connection-test affordances were deliberately removed
+from this UI rather than left stubbed — every remaining action in
+Settings/Wizard does something real.
 
 ### Sync pipeline (`sync.py`)
 
@@ -154,9 +191,13 @@ HTTP client that talks to mcp-server).
 Thin Go HTTP service: `GET /tools` lists tool definitions, `POST
 /tools/call` dispatches by name (`internal/tools/registry.go`). Each vendor
 integration (`jira.go`, `github.go`, `web.go`, `files.go`, `memory.go`) is a
-self-contained tool implementation. It still has its own independent OTEL
-tracing setup (`internal/observability/`) — this is separate from and
-unrelated to chat-agent, which has no tracing/metrics instrumentation.
+self-contained tool implementation. `web.go`'s `web_search` dispatches to
+SearXNG (if `SEARXNG_BASE_URL` set) → Brave (if `BRAVE_SEARCH_API_KEY` set) →
+scraping `lite.duckduckgo.com` as a last resort — SearXNG is the bundled
+default (see `docker-compose.yml`'s `searxng` service). It still has its own
+independent OTEL tracing setup (`internal/observability/`) — this is separate
+from and unrelated to chat-agent, which has no tracing/metrics
+instrumentation.
 
 ## Known implementation gaps
 

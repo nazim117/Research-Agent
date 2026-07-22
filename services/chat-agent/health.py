@@ -58,6 +58,25 @@ async def _check_mcp_server(mcp_client) -> dict:
         return {"status": "error", "detail": f"unreachable: {exc}", "required": False}
 
 
+async def _check_web_search(mcp_client) -> dict:
+    # Optional: only matters if the user turns on the chat's web-search
+    # toggle. mcp-server reports which backend it's configured to use (and,
+    # for SearXNG, whether it's actually reachable right now) via its own
+    # /health response — see internal/tools/web.go's dispatch order.
+    try:
+        status = await mcp_client.get_web_search_status()
+        backend = status.get("backend", "unknown")
+        if backend == "searxng":
+            if status.get("reachable"):
+                return {"status": "ok", "detail": "SearXNG reachable", "required": False}
+            return {"status": "error", "detail": "SearXNG configured but unreachable", "required": False}
+        if status.get("configured"):
+            return {"status": "ok", "detail": f"using {backend}", "required": False}
+        return {"status": "ok", "detail": f"using {backend} (no API key configured)", "required": False}
+    except Exception as exc:
+        return {"status": "error", "detail": f"could not determine: {exc}", "required": False}
+
+
 def _check_docker_sync() -> dict:
     # Best-effort — no Docker Engine API client is used here (would add a new
     # dependency for a purely optional check); shells out to the CLI instead.
@@ -89,12 +108,13 @@ async def check_detailed_health(settings, mcp_client) -> dict:
     Returns one entry per dependency in the shape the dashboard expects:
     {status: "ok"|"error", detail: str, required: bool}.
     """
-    ollama, qdrant, embeddings, docker, mcp_server = await asyncio.gather(
+    ollama, qdrant, embeddings, docker, mcp_server, web_search = await asyncio.gather(
         _check_ollama(settings.ollama_base_url),
         _check_qdrant(settings.qdrant_url),
         _check_embeddings(settings.embeddings_base_url),
         _check_docker(),
         _check_mcp_server(mcp_client),
+        _check_web_search(mcp_client),
     )
     return {
         "ollama": ollama,
@@ -102,4 +122,5 @@ async def check_detailed_health(settings, mcp_client) -> dict:
         "embeddings": embeddings,
         "docker": docker,
         "mcp_server": mcp_server,
+        "web_search": web_search,
     }

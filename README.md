@@ -16,13 +16,18 @@ part of the active Research Agent runtime.
 - Creates isolated project workspaces with their own memory and sources
 - Stores conversation history in SQLite
 - Stores semantic memory and document chunks in Qdrant
-- Uses Ollama for local embeddings
-- Supports Ollama chat or an OpenAI-compatible chat backend
+- Embeds everything locally through a bundled embedding server (no API key,
+  no cloud dependency for RAG/memory — see [Configuration](#configuration))
+- Chats through local Ollama by default, or any OpenAI-compatible cloud
+  provider (OpenAI, Claude, Grok, Groq, DeepSeek, ...) configured from Settings
+- Can search the web (self-hosted SearXNG by default, Brave as an optional
+  override) when explicitly turned on for a message
 - Ingests pasted text, files, URLs, webpages, and transcripts
 - Extracts decisions, action items, and risks from meeting transcripts
 - Syncs Jira issues and GitHub issues/PRs into project RAG memory
 - Lets the assistant draft Jira/GitHub comments for human approval
-- Provides a React dashboard and a Chrome side-panel extension
+- Provides a React dashboard (with a first-run Setup Wizard and a Settings
+  page for all of the above) and a Chrome side-panel extension
 
 ## Active Architecture
 
@@ -36,25 +41,32 @@ flowchart LR
 
   ChatAgent --> SQLite[("SQLite chat.db")]
   ChatAgent --> Qdrant[("Qdrant")]
-  ChatAgent --> Ollama["Ollama embeddings/chat"]
-  ChatAgent --> LLM["OpenAI-compatible chat backend"]
-  ChatAgent --> Jira["Jira Cloud"]
-  ChatAgent --> GitHub["GitHub REST API"]
+  ChatAgent --> Embeddings["Embeddings service (TEI) :8082"]
+  ChatAgent --> Ollama["Ollama chat (optional, local)"]
+  ChatAgent --> LLM["Cloud chat provider (optional)"]
+  ChatAgent --> MCP["Go mcp-server :8083"]
+  MCP --> Jira["Jira Cloud"]
+  MCP --> GitHub["GitHub REST API"]
+  MCP --> SearXNG["SearXNG web search :8085"]
   ChatAgent --> Web["YouTube/Wikipedia/URLs"]
 ```
 
 ### Active Containers
 
-These are the only services needed to run Research Agent:
+These are the services needed to run Research Agent — all bundled via
+`docker-compose.yml` except `chat-agent`/`dashboard`, which are normally run
+natively for hot reload during development (see [Quick Start](#quick-start)):
 
 | Container | Path | Responsibility |
 |---|---|---|
 | chat-agent | `services/chat-agent/` | FastAPI backend for projects, chat, RAG, memory, sync, transcript processing, and action approval |
 | mcp-server | `services/mcp-server/` | Go service that holds Jira/GitHub credentials and proxies PM tool calls — chat-agent calls this, never the vendor APIs directly |
 | qdrant | Docker image `qdrant/qdrant` | Vector database for conversation and document embeddings |
+| embeddings | Docker image `ghcr.io/huggingface/text-embeddings-inference` | Bundled, purpose-built embedding server (BAAI/bge-base-en-v1.5) — always used for RAG/memory, regardless of which chat provider is active |
+| searxng | Docker image `searxng/searxng` | Self-hosted web search backend for the agent's optional web-search toggle — no API key required |
 | dashboard | `dashboard/` | React UI on port 5173 — `npm run dev` for hot reload, or the Docker Compose service |
 | extension | `extension/` | Chrome side panel for chatting, ingesting current pages, syncing, and approving actions |
-| ollama | host service | Local embedding model and optional local chat model |
+| ollama | host service (optional) | Only needed if you choose local chat in Settings > LLM Models — not used for embeddings |
 
 ### Repository Layout
 
@@ -66,7 +78,7 @@ services/
     projects.py             SQLite project store and schema version
     memory.py               SQLite conversation history
     vectors.py              Qdrant client wrapper and project filters
-    embeddings.py           Ollama embedding client
+    embeddings.py           Embeddings service (TEI) client
     rag.py                  Chunking, document ingest, retrieval, source listing
     llm.py                  Ollama/OpenAI-compatible chat client
     transcript.py           Transcript extraction and structured SQLite storage
@@ -93,6 +105,10 @@ extension/
   background.js             Active-tab text extraction broker
   content.js                Page text extraction content script
   sidepanel.html            Extension UI shell
+
+scripts/
+  start.ps1                 Windows one-command dev startup helper (see Quick Start)
+  start.cmd                 Double-clickable wrapper for start.ps1
 ```
 
 ## Data and Storage Model
@@ -131,7 +147,7 @@ sequenceDiagram
   participant UI as Dashboard/Extension
   participant API as chat-agent /chat
   participant SQL as SQLite
-  participant O as Ollama embeddings
+  participant O as Embeddings service
   participant Q as Qdrant
   participant L as Chat LLM
 
@@ -157,7 +173,7 @@ sequenceDiagram
   participant UI as Dashboard/Extension
   participant API as chat-agent
   participant R as rag.py
-  participant O as Ollama embeddings
+  participant O as Embeddings service
   participant Q as Qdrant documents
 
   UI->>API: POST /ingest, /ingest/file, or /ingest/url
@@ -243,35 +259,40 @@ The active API is served by `services/chat-agent/main.py`.
 
 `chat-agent` reads environment variables through `services/chat-agent/config.py`.
 Values can come from the repo-root `.env`, a service-local `.env`, Docker
-Compose, or the shell.
+Compose, or the shell. **All of the chat-provider and env-var settings below
+can also be edited from the dashboard's Settings page** (Settings > LLM Models
+for chat provider/model, Settings > Advanced for everything else) instead of
+hand-editing `.env` — see [Quick Start](#quick-start).
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `LLM_PROVIDER` | `ollama` | `ollama` or `openai_compatible` |
-| `OLLAMA_CHAT_MODEL` | `llama3` | Ollama chat model |
-| `OPENAI_BASE_URL` | empty | Base URL for OpenAI-compatible chat |
-| `OPENAI_API_KEY` | empty | API key for OpenAI-compatible chat |
-| `OPENAI_MODEL` | empty | Model name for OpenAI-compatible chat |
+| `OLLAMA_CHAT_MODEL` | `llama3` | Ollama chat model (only used when `LLM_PROVIDER=ollama`) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `OPENAI_BASE_URL` | empty | Base URL for the OpenAI-compatible chat backend (OpenAI, Claude via Anthropic's OpenAI-compatible endpoint, Grok, Groq, DeepSeek, or any other OpenAI-compatible API) |
+| `OPENAI_API_KEY` | empty | API key for the OpenAI-compatible chat backend |
+| `OPENAI_MODEL` | empty | Model name for the OpenAI-compatible chat backend |
 | `OPENAI_PROVIDER_LABEL` | `openai-compatible` | Name used in error messages |
+| `EMBEDDINGS_BASE_URL` | `http://localhost:8082` | The bundled embeddings service (see `docker-compose.yml`'s `embeddings` service). Not user-configurable beyond the URL — the model it serves is fixed at deploy time; changing it after documents exist would invalidate everything already embedded |
+| `SEARXNG_BASE_URL` | empty | Bundled SearXNG web-search backend (see `docker-compose.yml`'s `searxng` service); takes precedence over `BRAVE_SEARCH_API_KEY` when set |
+| `BRAVE_SEARCH_API_KEY` | empty | Alternative web-search backend if you'd rather use Brave than SearXNG |
 | `SQLITE_PATH` | `chat.db` | SQLite database path |
 | `PORT` | `8080` | FastAPI port |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Embedding model |
 | `QDRANT_URL` | `http://localhost:6333` | Qdrant URL |
 | `QDRANT_COLLECTION` | `conversations` | Conversation vector collection |
 | `QDRANT_DOCS_COLLECTION` | `documents` | Document vector collection |
 | `MEMORY_SEARCH_K` | `5` | Number of conversation memory hits |
-| `JIRA_BASE_URL` | empty | Jira Cloud base URL |
-| `JIRA_EMAIL` | empty | Jira Cloud account email |
-| `JIRA_API_TOKEN` | empty | Jira Cloud API token |
-| `GITHUB_TOKEN` | empty | GitHub Personal Access Token |
+| `JIRA_BASE_URL` | empty | Jira Cloud base URL (read only by mcp-server) |
+| `JIRA_EMAIL` | empty | Jira Cloud account email (read only by mcp-server) |
+| `JIRA_API_TOKEN` | empty | Jira Cloud API token (read only by mcp-server) |
+| `GITHUB_TOKEN` | empty | GitHub Personal Access Token (read only by mcp-server) |
 
-Minimal local `.env` for Ollama chat:
+Minimal local `.env` for Ollama chat (embeddings need no config — the bundled
+`embeddings` service handles that on its own):
 
 ```bash
 LLM_PROVIDER=ollama
 OLLAMA_CHAT_MODEL=llama3
-OLLAMA_EMBED_MODEL=nomic-embed-text
 QDRANT_URL=http://localhost:6333
 ```
 
@@ -287,33 +308,56 @@ OPENAI_PROVIDER_LABEL=DeepSeek
 
 ## Quick Start
 
+### Windows: one-command startup
+
+If you're on Windows, `scripts\start.cmd` does steps 0–3 below for you: it
+creates `.env` if missing, starts the Docker infra (Qdrant, embeddings,
+SearXNG, mcp-server), sets up chat-agent's virtualenv and the dashboard's
+`node_modules` on first run, and opens both in their own windows with hot
+reload. Just double-click it (or run `scripts\start.ps1` from PowerShell),
+then open `http://localhost:5173`. Requires Python, Node.js/npm, and Docker
+Desktop to already be installed — see Prerequisites below. macOS/Linux users
+and anyone who wants to see what each step does should follow steps 0–4
+manually.
+
 ### Prerequisites
 
 - Python 3.12+
-- Docker and Docker Compose for Qdrant
-- Ollama running locally
-- Ollama embedding model:
-
-```bash
-ollama pull nomic-embed-text
-```
-
-If using local Ollama chat:
+- Node.js and npm (for the dashboard)
+- Docker and Docker Compose (for Qdrant, the bundled embeddings service, and
+  bundled web search)
+- Ollama, only if you want local chat — not needed for embeddings, and not
+  needed at all if you'll use a cloud chat provider (Settings > LLM Models
+  supports OpenAI, Claude, Grok, Groq, DeepSeek, and any other
+  OpenAI-compatible endpoint):
 
 ```bash
 ollama pull llama3
 ```
 
-### 1. Start Qdrant and mcp-server
+### 0. Copy the example env file
 
 ```bash
-docker compose up qdrant mcp-server -d
+cp .env.example .env
 ```
 
-`mcp-server` holds your Jira and GitHub credentials. `chat-agent` calls it for
-all PM tool operations. Starting only these two here — rather than the full
-`docker compose up` — leaves `chat-agent` and `dashboard` to run locally with
-hot reload (steps 2–3), which is faster for development.
+Every value has a working default (local Ollama chat, bundled embeddings, no
+Jira/GitHub) — this step just gives you a file to edit. You can also skip
+editing `.env` by hand entirely and use the dashboard's Setup Wizard (step 3
+below) or Settings page instead.
+
+### 1. Start infra: Qdrant, embeddings, web search, mcp-server
+
+```bash
+docker compose up qdrant embeddings searxng mcp-server -d
+```
+
+The first start downloads the embedding model (a few hundred MB) — give it a
+minute before moving on. `mcp-server` holds your Jira/GitHub credentials;
+`chat-agent` calls it for all PM tool operations, never the vendor APIs
+directly. Starting these four here — rather than the full `docker compose up`
+— leaves `chat-agent` and `dashboard` to run locally with hot reload (steps
+2–3), which is faster for development.
 
 ### 2. Start chat-agent
 
@@ -339,7 +383,11 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. On first run you'll land in the **Setup
+Wizard** — it checks that every service above is reachable, helps you pull an
+Ollama chat model (or configure a cloud provider instead), and creates your
+first project. You can re-open it later, or manage everything ongoing, from
+the **Settings** page.
 
 ### 4. Use the extension
 
@@ -352,7 +400,15 @@ Chat-agent tests:
 
 ```bash
 cd services/chat-agent
-pytest
+pytest                                          # unit tier (no infra needed)
+pytest tests/ -m integration                    # needs Qdrant/embeddings/mcp-server running; self-skips otherwise
+```
+
+mcp-server tests:
+
+```bash
+cd services/mcp-server
+go build ./... && go vet ./... && gofmt -l . && go test ./... -v
 ```
 
 Dashboard lint:
@@ -367,9 +423,9 @@ npm run lint
 - `mcp-server` (Go, port 8083) is an **active** dependency — `chat-agent` routes
   all Jira/GitHub calls through it. Always start it alongside Qdrant.
 - `dashboard/vite.config.js` proxies `/api` to `localhost:8080` for
-  development (`npm run dev`, port 5173). The `dashboard` Docker Compose
-  service's `nginx.conf` also proxies `/api` to `chat-agent:8080` on port
-  5173, so both paths work correctly.
+  development (`npm run dev`, port 5173) — this is the only supported way to
+  run the dashboard. The `dashboard` Docker Compose service's `nginx.conf` is
+  currently broken; don't use `docker compose up dashboard`.
 - The extension has UI support for retrying failed actions, but the FastAPI
   route `/actions/{action_id}/retry` is not currently implemented.
 - `briefing.py` attempts a best-effort RAG lookup with a vector-store interface
@@ -382,9 +438,15 @@ npm run lint
 - Conversation history and structured transcript data are stored locally in
   SQLite.
 - Semantic vectors and document chunks are stored locally in Qdrant.
-- Embeddings use local Ollama by default.
+- Embeddings always run through the bundled, self-hosted embedding server —
+  no document or conversation content is sent to a cloud API for embedding,
+  regardless of which chat provider is active.
 - Chat completion can be local Ollama or a configured external
-  OpenAI-compatible provider.
+  OpenAI-compatible provider (chosen explicitly in Settings; nothing is sent
+  to a cloud provider until you configure one).
+- Web search defaults to a bundled, self-hosted SearXNG instance (no API key,
+  no third party) and only runs when explicitly turned on for a message;
+  Brave Search API is available as an opt-in alternative.
 - Jira/GitHub sync and comment approval call external APIs only when configured.
 - Human approval is required before the assistant writes comments to Jira or
   GitHub.
@@ -395,11 +457,12 @@ npm run lint
 Research Agent is the entire scope of this repository:
 
 - FastAPI chat-agent
-- Go mcp-server (Jira/GitHub API gateway)
+- Go mcp-server (Jira/GitHub API gateway, web search)
 - SQLite project and memory storage
 - Qdrant RAG/vector memory
-- Ollama embeddings
-- Optional OpenAI-compatible chat provider
+- Bundled embeddings service (Hugging Face Text Embeddings Inference)
+- Local Ollama chat, or a cloud OpenAI-compatible chat provider
+- Bundled SearXNG web search, or Brave Search API as an alternative
 - Jira/GitHub sync and comment approval
-- React dashboard
+- React dashboard with a first-run Setup Wizard and a Settings page
 - Chrome extension
