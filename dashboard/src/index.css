@@ -569,6 +569,7 @@ svg[aria-hidden="true"] { display: inline-block; vertical-align: -0.15em; flex-s
 .flex-1 { flex: 1; }
 .mt-8 { margin-top: 8px; }
 .mt-12 { margin-top: 12px; }
+.mb-8 { margin-bottom: 8px; }
 .ml-4 { margin-left: 4px; }
 .ml-auto { margin-left: auto; }
 .input-sm { width: 160px; font-size: 12px; padding: 4px 8px; }
@@ -600,6 +601,77 @@ svg[aria-hidden="true"] { display: inline-block; vertical-align: -0.15em; flex-s
 .transcript-text { font-size: 12px; color: var(--text); }
 .transcript-owner { font-size: 11px; color: var(--accent); margin-top: 4px; }
 .transcript-due { font-size: 11px; color: var(--amber); margin-top: 2px; }
+
+/* ─── Flashcards (review mode) ────────────────────────────────────── */
+.flashcard-counter {
+  font-size: 11px; color: var(--text-3); text-align: center; margin-bottom: 8px;
+}
+.flashcard {
+  background: var(--bg-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg); padding: 24px 20px; text-align: center;
+  min-height: 140px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+.flashcard-source { font-size: 10px; color: var(--text-3); margin-bottom: 10px; }
+.flashcard-front { font-size: 16px; color: var(--text); font-weight: 600; line-height: 1.4; }
+.flashcard-back {
+  font-size: 13px; color: var(--text-2); margin-top: 16px; padding-top: 16px;
+  border-top: 1px solid var(--border-subtle); width: 100%;
+}
+.flashcard-reveal-link {
+  background: none; border: none; font-family: inherit;
+  font-size: 12px; color: var(--accent); cursor: pointer;
+  padding: 0; margin-top: 16px; text-decoration: underline;
+}
+.flashcard-reveal-link:hover { color: var(--text); }
+
+.flashcard-nav {
+  display: flex; gap: 10px; justify-content: center; align-items: center;
+  margin-top: 16px;
+}
+.flashcard-nav-btn {
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  width: 40px; height: 40px; border-radius: var(--r-pill);
+  background: var(--bg-inset); border: 1px solid var(--border-subtle);
+  color: var(--text-2); font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: border-color var(--t), color var(--t), opacity var(--t);
+}
+.flashcard-nav-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.flashcard-nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.flashcard-nav-btn.wrong { color: var(--red); width: auto; padding: 0 12px; }
+.flashcard-nav-btn.wrong:hover:not(:disabled) { border-color: var(--red); }
+.flashcard-nav-btn.correct { color: var(--green); width: auto; padding: 0 12px; }
+.flashcard-nav-btn.correct:hover:not(:disabled) { border-color: var(--green); }
+
+/* ─── Flashcards (session summary) ────────────────────────────────── */
+.flashcard-summary { text-align: center; }
+.flashcard-summary-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
+.flashcard-summary-card {
+  background: var(--bg-raised); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg); padding: 20px;
+  display: flex; align-items: center; justify-content: center; gap: 28px;
+  flex-wrap: wrap;
+}
+.flashcard-ring-wrap { position: relative; width: 132px; height: 132px; flex-shrink: 0; }
+.flashcard-ring-bg { stroke: var(--border-subtle); }
+.flashcard-ring-fg { stroke: var(--green); transition: stroke-dashoffset 0.4s ease; }
+.flashcard-ring-label {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+.flashcard-ring-score { font-size: 20px; font-weight: 700; color: var(--text); }
+.flashcard-ring-percent { font-size: 12px; color: var(--text-2); }
+.flashcard-ring-time { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+.flashcard-summary-stats { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.flashcard-summary-stat {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  font-size: 13px; color: var(--text-2); min-width: 110px;
+}
+.flashcard-summary-stat strong { font-size: 15px; }
+.flashcard-summary-stat strong.correct { color: var(--green); }
+.flashcard-summary-stat strong.wrong { color: var(--red); }
+.flashcard-report-item.wrong { border-left: 3px solid var(--red); }
+.flashcard-report-item.correct { border-left: 3px solid var(--green); }
 
 /* ─── Modal (Step 11 briefing) ──────────────────────────────── */
 .modal-overlay {

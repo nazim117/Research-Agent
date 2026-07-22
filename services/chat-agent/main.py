@@ -56,6 +56,7 @@ from transcript import (
     TranscriptStore,
     extract_structured,
 )
+from flashcards import FlashcardStore, generate_candidates, schedule_review
 from vectors import VectorStore
 import briefing
 import standup
@@ -70,6 +71,7 @@ sync_store = SyncStore(settings.sqlite_path)
 action_store = ActionStore(settings.sqlite_path)
 transcript_store = TranscriptStore(settings.sqlite_path)
 document_state_store = DocumentStateStore(settings.sqlite_path)
+flashcard_store = FlashcardStore(settings.sqlite_path)
 
 # Shared MCPClient — the single gateway to all PM vendor APIs.
 # Credentials (JIRA_*, GITHUB_TOKEN) live on the mcp-server; this service
@@ -150,6 +152,7 @@ async def lifespan(app: FastAPI):
     await sync_store.init()
     await transcript_store.init()
     await document_state_store.init()
+    await flashcard_store.init()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -330,6 +333,28 @@ class RiskOut(BaseModel):
     source: str
     text: str
     created_at: str
+
+
+class FlashcardOut(BaseModel):
+    id: str
+    source: str
+    front: str
+    back: str
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+    due_at: str
+    last_reviewed_at: str | None
+    created_at: str
+
+
+class FlashcardReviewRequest(BaseModel):
+    quality: int = Field(..., ge=0, le=5, description="0=Again, 3=Hard, 4=Good, 5=Easy")
+
+
+class FlashcardUpdateRequest(BaseModel):
+    front: str = Field(..., min_length=1)
+    back: str = Field(..., min_length=1)
 
 
 class BriefActionOut(BaseModel):
@@ -633,6 +658,7 @@ async def delete_project(project_id: str):
     await action_store.delete_by_project(project_id)
     await transcript_store.delete_by_project(project_id)
     await document_state_store.delete_by_project(project_id)
+    await flashcard_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -996,6 +1022,84 @@ async def get_risks(project_id: str) -> list[RiskOut]:
     ]
 
 
+def _flashcard_out(c) -> FlashcardOut:
+    return FlashcardOut(
+        id=c.id, source=c.source, front=c.front, back=c.back,
+        ease_factor=c.ease_factor, interval_days=c.interval_days,
+        repetitions=c.repetitions, due_at=c.due_at,
+        last_reviewed_at=c.last_reviewed_at, created_at=c.created_at,
+    )
+
+
+@app.post(
+    "/projects/{project_id}/sources/{source}/flashcards/generate",
+    response_model=list[FlashcardOut],
+)
+async def generate_flashcards_for_source(project_id: str, source: str) -> list[FlashcardOut]:
+    """Generate flashcards from an already-ingested source's full text.
+
+    Additive only — re-running this for a source you've already generated
+    cards for adds more candidates, it never touches or replaces existing
+    cards (which may have real spaced-repetition progress). Remove a card
+    you don't want via DELETE /flashcards/{id} instead.
+    """
+    await _require_project(project_id)
+    chunks = await rag.retrieve_by_source(project_id, source, vstore)
+    if not chunks:
+        raise HTTPException(status_code=404, detail=f"No ingested content found for source {source!r}")
+    text = "".join(c.text for c in sorted(chunks, key=lambda c: c.chunk_index))
+
+    try:
+        candidates = await generate_candidates(text, chat)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    created = await flashcard_store.save_generated(project_id, source, candidates)
+    return [_flashcard_out(c) for c in created]
+
+
+@app.get("/projects/{project_id}/flashcards", response_model=list[FlashcardOut])
+async def list_flashcards(project_id: str) -> list[FlashcardOut]:
+    """List all flashcards for a project, soonest-due first."""
+    await _require_project(project_id)
+    rows = await flashcard_store.list_by_project(project_id)
+    return [_flashcard_out(c) for c in rows]
+
+
+@app.post("/flashcards/{card_id}/review", response_model=FlashcardOut)
+async def review_flashcard(card_id: str, req: FlashcardReviewRequest) -> FlashcardOut:
+    """Record a review and reschedule the card's next due date via SM-2."""
+    card = await flashcard_store.get(card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    fields = schedule_review(
+        card.ease_factor, card.interval_days, card.repetitions, req.quality,
+    )
+    await flashcard_store.update_review(card_id, fields)
+    updated = await flashcard_store.get(card_id)
+    return _flashcard_out(updated)
+
+
+@app.patch("/flashcards/{card_id}", response_model=FlashcardOut)
+async def update_flashcard(card_id: str, req: FlashcardUpdateRequest) -> FlashcardOut:
+    """Manually correct a generated card's front/back text."""
+    card = await flashcard_store.get(card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    await flashcard_store.update_text(card_id, req.front, req.back)
+    updated = await flashcard_store.get(card_id)
+    return _flashcard_out(updated)
+
+
+@app.delete("/flashcards/{card_id}")
+async def delete_flashcard(card_id: str):
+    card = await flashcard_store.get(card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    await flashcard_store.delete(card_id)
+    return {"deleted": True}
+
+
 @app.get("/projects/{project_id}/briefing", response_model=BriefingOut)
 async def get_briefing(project_id: str) -> BriefingOut:
     """Return a concise status snapshot for the project: open actions, recent decisions, active risks, and an AI-generated summary."""
@@ -1087,13 +1191,15 @@ async def delete_source(project_id: str, source: str):
 
     Cascade:
       - Qdrant:  all chunks tagged with this project_id + source
-      - SQLite:  any transcript-derived decisions/action_items/risks for
-                 this source, and any stored enabled/disabled state
+      - SQLite:  any transcript-derived decisions/action_items/risks and any
+                 generated flashcards for this source, and any stored
+                 enabled/disabled state
     """
     await _require_project(project_id)
     await vstore.delete_by_source(settings.qdrant_docs_collection, project_id, source)
     await transcript_store.delete_by_source(project_id, source)
     await document_state_store.delete_by_source(project_id, source)
+    await flashcard_store.delete_by_source(project_id, source)
     logger.info("Deleted source %r from project %s", source, project_id)
     return {"deleted": True}
 

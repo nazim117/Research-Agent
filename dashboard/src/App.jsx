@@ -4,7 +4,7 @@ import * as api from './api.js';
 import {
   IconX, IconSettings, IconRefresh, IconUpload, IconLoader,
   IconSearch, IconBook, IconBot, IconClipboard, IconSun, IconEdit, IconCheck, IconAlert,
-  IconTrash,
+  IconTrash, IconChevronLeft, IconChevronRight,
 } from './icons.jsx';
 import SetupWizard, { STATUS_KEY as WIZARD_STATUS_KEY } from './wizard/SetupWizard.jsx';
 import SettingsPage from './settings/SettingsPage.jsx';
@@ -289,6 +289,7 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [sources, setSources] = useState([]);
+  const [flashcardSourceBusy, setFlashcardSourceBusy] = useState(null);
 
   useEffect(() => {
     if (!projectId) { setSources([]); return; }
@@ -361,6 +362,19 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
       onSourcesChange();
     } catch (err) {
       setToast({ message: `Update failed: ${err.message}` });
+    }
+  }
+
+  async function handleGenerateFlashcards(s) {
+    if (flashcardSourceBusy) return;
+    setFlashcardSourceBusy(s.source);
+    try {
+      const created = await api.generateFlashcards(projectId, s.source);
+      setToast({ message: `Generated ${created.length} flashcard(s) from "${s.source}" — see the Flashcards tab.` });
+    } catch (err) {
+      setToast({ message: `Flashcard generation failed: ${err.message}` });
+    } finally {
+      setFlashcardSourceBusy(null);
     }
   }
 
@@ -460,6 +474,16 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
                 />
                 <span className="source-name" title={s.source}>{s.source}</span>
                 <span className="source-chunks">{s.chunks} chunks</span>
+                <button
+                  type="button"
+                  className="source-delete-btn"
+                  onClick={() => handleGenerateFlashcards(s)}
+                  disabled={flashcardSourceBusy === s.source}
+                  title={`Generate flashcards from "${s.source}"`}
+                  data-testid="source-generate-flashcards-btn"
+                >
+                  {flashcardSourceBusy === s.source ? <IconLoader className="spin" /> : <IconBook />}
+                </button>
                 <button
                   type="button"
                   className="source-delete-btn"
@@ -624,7 +648,199 @@ const STUDIO_TABS = [
   { label: 'Actions', Icon: IconEdit },
   { label: 'Decisions', Icon: IconCheck },
   { label: 'Risks', Icon: IconAlert },
+  { label: 'Flashcards', Icon: IconBook },
 ];
+
+// One card from a snapshotted review-session queue — front, "See answer"
+// link, then reveal the back and rate Wrong/Correct (maps to SM-2 quality
+// 1/4 under the hood — see StudioPane's handleRateFlashcard). Prev/Next are
+// pure navigation within the queue, no rating side effect. Keyed by card.id
+// by the caller so `revealed` resets automatically on navigation.
+function FlashcardReview({ card, index, total, tally, onRate, onPrev, onNext, canGoPrev, canGoNext }) {
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <div>
+      <div className="flashcard-counter">{index + 1}/{total}</div>
+      <div className="flashcard">
+        <div className="flashcard-source">{card.source}</div>
+        <div className="flashcard-front">{card.front}</div>
+        {revealed ? (
+          <div className="flashcard-back">{card.back}</div>
+        ) : (
+          <button type="button" className="flashcard-reveal-link" onClick={() => setRevealed(true)}>
+            See answer
+          </button>
+        )}
+      </div>
+      <div className="flashcard-nav">
+        <button
+          type="button"
+          className="flashcard-nav-btn"
+          onClick={onPrev}
+          disabled={!canGoPrev}
+          aria-label="Previous card"
+        >
+          <IconChevronLeft />
+        </button>
+        <button
+          type="button"
+          className="flashcard-nav-btn wrong"
+          onClick={() => onRate(card, true)}
+          disabled={!revealed}
+          aria-label="Wrong"
+        >
+          <IconX /> {tally.wrong}
+        </button>
+        <button
+          type="button"
+          className="flashcard-nav-btn correct"
+          onClick={() => onRate(card, false)}
+          disabled={!revealed}
+          aria-label="Correct"
+        >
+          <IconCheck /> {tally.correct}
+        </button>
+        <button
+          type="button"
+          className="flashcard-nav-btn"
+          onClick={onNext}
+          disabled={!canGoNext}
+          aria-label="Next card"
+        >
+          <IconChevronRight />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ProgressRing({ percent, size = 132, stroke = 10 }) {
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (percent / 100) * circumference;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle
+        cx={size / 2} cy={size / 2} r={radius} fill="none"
+        strokeWidth={stroke} className="flashcard-ring-bg"
+      />
+      <circle
+        cx={size / 2} cy={size / 2} r={radius} fill="none"
+        strokeWidth={stroke} strokeLinecap="round" className="flashcard-ring-fg"
+        strokeDasharray={circumference} strokeDashoffset={offset}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+    </svg>
+  );
+}
+
+function formatElapsed(ms) {
+  const totalSecs = Math.round(ms / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+  return mins > 0 ? `${mins} min${mins === 1 ? '' : 's'} ${secs} sec${secs === 1 ? '' : 's'}` : `${secs} sec${secs === 1 ? '' : 's'}`;
+}
+
+// End-of-session summary — shown once the review queue is exhausted.
+// reviewLog/tally/elapsedMs are all session-scoped (see StudioPane's
+// snapshotReviewQueue) — nothing here is persisted beyond the SM-2 fields
+// already saved per-card as each rating happened.
+function FlashcardSessionSummary({ tally, reviewLog, elapsedMs }) {
+  const [showReport, setShowReport] = useState(false);
+  const total = tally.correct + tally.wrong;
+  const percent = total > 0 ? Math.round((tally.correct / total) * 100) : 0;
+
+  return (
+    <div className="flashcard-summary">
+      <div className="flashcard-summary-title">Nicely done! 🎉</div>
+      <div className="flashcard-summary-card">
+        <div className="flashcard-ring-wrap">
+          <ProgressRing percent={percent} />
+          <div className="flashcard-ring-label">
+            <div className="flashcard-ring-score">{tally.correct}/{total}</div>
+            <div className="flashcard-ring-percent">{percent}%</div>
+            <div className="flashcard-ring-time">{formatElapsed(elapsedMs)}</div>
+          </div>
+        </div>
+        <div className="flashcard-summary-stats">
+          <div className="flashcard-summary-stat">
+            <span>Got it</span>
+            <strong className="correct">{tally.correct}</strong>
+          </div>
+          <div className="flashcard-summary-stat">
+            <span>Missed it</span>
+            <strong className="wrong">{tally.wrong}</strong>
+          </div>
+        </div>
+      </div>
+
+      <button className="btn btn-primary mt-12" onClick={() => setShowReport(v => !v)}>
+        {showReport ? 'Hide full report' : 'See full report'}
+      </button>
+
+      {showReport && (
+        <div className="transcript-results mt-12">
+          {reviewLog.map((entry, i) => (
+            <div
+              key={i}
+              className={`transcript-item flashcard-report-item ${entry.wrong ? 'wrong' : 'correct'}`}
+            >
+              <div className="transcript-meta">
+                {entry.wrong ? <><IconX /> Missed it</> : <><IconCheck /> Got it</>}
+              </div>
+              <div className="transcript-text"><strong>Q:</strong> {entry.card.front}</div>
+              <div className="transcript-text"><strong>A:</strong> {entry.card.back}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A single row in "browse all cards" mode — inline edit, no modal.
+function FlashcardItem({ card, onUpdate, onDelete }) {
+  const [editing, setEditing] = useState(false);
+  const [front, setFront] = useState(card.front);
+  const [back, setBack] = useState(card.back);
+
+  if (editing) {
+    return (
+      <div className="transcript-item">
+        <div className="transcript-meta">{card.source}</div>
+        <textarea className="input" rows={2} value={front} onChange={e => setFront(e.target.value)} />
+        <textarea className="input mt-8" rows={2} value={back} onChange={e => setBack(e.target.value)} />
+        <div className="row-gap-sm mt-8">
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={() => { onUpdate(card.id, front, back); setEditing(false); }}
+          >
+            Save
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => { setFront(card.front); setBack(card.back); setEditing(false); }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="transcript-item">
+      <div className="transcript-meta">{card.source}</div>
+      <div className="transcript-text"><strong>Q:</strong> {card.front}</div>
+      <div className="transcript-text"><strong>A:</strong> {card.back}</div>
+      <div className="row-gap-sm mt-8">
+        <button className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}>Edit</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => onDelete(card.id)}><IconTrash /></button>
+      </div>
+    </div>
+  );
+}
 
 function StudioPane({ projectId, actionsKey, setToast }) {
   const [tab, setTab] = useState(() => {
@@ -638,6 +854,14 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   const [actions, setActions] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [risks, setRisks] = useState([]);
+  const [flashcards, setFlashcards] = useState([]);
+  const [flashcardsBrowseMode, setFlashcardsBrowseMode] = useState(false);
+  const [reviewQueue, setReviewQueue] = useState([]);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const [reviewTally, setReviewTally] = useState({ wrong: 0, correct: 0 });
+  const [reviewLog, setReviewLog] = useState([]); // [{ card, wrong }] in review order, this session
+  const [reviewStartedAt, setReviewStartedAt] = useState(null);
+  const [reviewEndedAt, setReviewEndedAt] = useState(null);
 
   function selectTab(i) {
     setTab(i);
@@ -650,10 +874,91 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   }, [projectId, actionsKey]);
 
   useEffect(() => {
-    if (!projectId) { setDecisions([]); setActions([]); setRisks([]); return; }
+    if (!projectId) { setDecisions([]); setActions([]); setRisks([]); setFlashcards([]); return; }
     api.listDecisions(projectId).then(setDecisions).catch(() => setDecisions([]));
     api.listRisks(projectId).then(setRisks).catch(() => setRisks([]));
+    loadFlashcards();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // Snapshotting the queue is an explicit action (initial load, tab click,
+  // Refresh, or switching back from browse mode) — NOT a reaction to
+  // `flashcards` changing, because rating a card also updates `flashcards`
+  // (so browse mode stays in sync), which would otherwise re-trigger this
+  // and wipe the in-progress counter/tally/log back to zero every review.
+  function snapshotReviewQueue(list) {
+    setReviewQueue(list.filter(c => new Date(c.due_at) <= new Date()));
+    setReviewIndex(0);
+    setReviewTally({ wrong: 0, correct: 0 });
+    setReviewLog([]);
+    setReviewStartedAt(Date.now());
+    setReviewEndedAt(null);
+  }
+
+  function loadFlashcards() {
+    if (!projectId) { setFlashcards([]); snapshotReviewQueue([]); return; }
+    api.listFlashcards(projectId).then(rows => {
+      setFlashcards(rows);
+      snapshotReviewQueue(rows);
+    }).catch(() => setFlashcards([]));
+  }
+
+  function toggleFlashcardsBrowseMode() {
+    setFlashcardsBrowseMode(v => {
+      const next = !v;
+      if (!next) snapshotReviewQueue(flashcards); // switching back to review mode
+      return next;
+    });
+  }
+
+  function goPrevFlashcard() {
+    setReviewIndex(i => Math.max(0, i - 1));
+  }
+
+  function goNextFlashcard() {
+    setReviewIndex(i => {
+      const next = Math.min(reviewQueue.length, i + 1);
+      if (next === reviewQueue.length) setReviewEndedAt(Date.now());
+      return next;
+    });
+  }
+
+  async function handleRateFlashcard(card, wrong) {
+    try {
+      const updated = await api.reviewFlashcard(card.id, wrong ? 1 : 4);
+      setFlashcards(prev => prev.map(c => (c.id === card.id ? updated : c)));
+      setReviewTally(t => (wrong ? { ...t, wrong: t.wrong + 1 } : { ...t, correct: t.correct + 1 }));
+      setReviewLog(prev => [...prev, { card, wrong }]);
+      setReviewIndex(i => {
+        const next = Math.min(reviewQueue.length, i + 1);
+        if (next === reviewQueue.length) setReviewEndedAt(Date.now());
+        return next;
+      });
+    } catch (err) {
+      setToast({ message: `Review failed: ${err.message}` });
+    }
+  }
+
+  async function handleUpdateFlashcard(cardId, front, back) {
+    try {
+      const updated = await api.updateFlashcard(cardId, front, back);
+      setFlashcards(prev => prev.map(c => (c.id === cardId ? updated : c)));
+    } catch (err) {
+      setToast({ message: `Update failed: ${err.message}` });
+    }
+  }
+
+  async function handleDeleteFlashcard(cardId) {
+    if (!window.confirm('Delete this flashcard?')) return;
+    try {
+      await api.deleteFlashcard(cardId);
+      setFlashcards(prev => prev.filter(c => c.id !== cardId));
+    } catch (err) {
+      setToast({ message: `Delete failed: ${err.message}` });
+    }
+  }
+
+  const remainingDue = Math.max(reviewQueue.length - reviewIndex, 0);
 
   async function loadBriefing() {
     if (!projectId || briefingLoading) return;
@@ -717,11 +1022,15 @@ function StudioPane({ projectId, actionsKey, setToast }) {
               selectTab(i);
               if (i === 0 && !briefing) loadBriefing();
               if (i === 1 && !standup) loadStandup();
+              if (i === 5) loadFlashcards();
             }}
           >
             <Icon /> {label}
             {i === 2 && actions.length > 0 && (
               <span className="section-badge ml-4">{actions.length}</span>
+            )}
+            {i === 5 && remainingDue > 0 && (
+              <span className="section-badge ml-4">{remainingDue}</span>
             )}
           </button>
           );
@@ -898,6 +1207,62 @@ function StudioPane({ projectId, actionsKey, setToast }) {
                   <div className="transcript-text">{r.text}</div>
                 </div>
               ))
+            )}
+          </div>
+        )}
+
+        {tab === 5 && (
+          <div>
+            <div className="row-gap-sm mb-8">
+              <button className="btn btn-secondary btn-sm" onClick={loadFlashcards}>
+                <IconRefresh /> Refresh
+              </button>
+              {flashcards.length > 0 && (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={toggleFlashcardsBrowseMode}
+                >
+                  {flashcardsBrowseMode ? 'Review due cards' : 'Browse all cards'}
+                </button>
+              )}
+            </div>
+
+            {flashcards.length === 0 ? (
+              <p className="no-data">
+                No flashcards yet — generate some from a source in the left panel.
+              </p>
+            ) : !flashcardsBrowseMode && reviewQueue.length === 0 ? (
+              <p className="no-data">No cards due right now — nice work. Check back later, or browse all cards below.</p>
+            ) : !flashcardsBrowseMode && reviewIndex >= reviewQueue.length ? (
+              <FlashcardSessionSummary
+                tally={reviewTally}
+                reviewLog={reviewLog}
+                elapsedMs={Math.max((reviewEndedAt ?? Date.now()) - (reviewStartedAt ?? Date.now()), 0)}
+              />
+            ) : !flashcardsBrowseMode ? (
+              <FlashcardReview
+                key={reviewQueue[reviewIndex].id}
+                card={reviewQueue[reviewIndex]}
+                index={reviewIndex}
+                total={reviewQueue.length}
+                tally={reviewTally}
+                onRate={handleRateFlashcard}
+                onPrev={goPrevFlashcard}
+                onNext={goNextFlashcard}
+                canGoPrev={reviewIndex > 0}
+                canGoNext={reviewIndex < reviewQueue.length}
+              />
+            ) : (
+              <div className="transcript-results">
+                {flashcards.map(c => (
+                  <FlashcardItem
+                    key={c.id}
+                    card={c}
+                    onUpdate={handleUpdateFlashcard}
+                    onDelete={handleDeleteFlashcard}
+                  />
+                ))}
+              </div>
             )}
           </div>
         )}
