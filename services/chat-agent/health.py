@@ -2,8 +2,9 @@
 # wizard step and Settings' Integrations tab.
 #
 # Each dependency is probed independently (asyncio.gather) so a failure in
-# one never masks or delays the others. Ollama and Qdrant are required;
-# Docker and mcp-server are optional (see docstrings for why).
+# one never masks or delays the others. Ollama, Qdrant, and the embeddings
+# service are required; Docker and mcp-server are optional (see docstrings
+# for why).
 
 from __future__ import annotations
 
@@ -33,6 +34,18 @@ async def _check_qdrant(url: str) -> dict:
         return {"status": "ok", "detail": f"reachable at {url}", "required": True}
     except Exception as exc:
         return {"status": "error", "detail": f"unreachable at {url}: {exc}", "required": True}
+
+
+async def _check_embeddings(base_url: str) -> dict:
+    # Required: RAG/memory retrieval always needs this, regardless of which
+    # chat provider (Ollama or a cloud one) is active.
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+            r = await client.get(f"{base_url}/health")
+            r.raise_for_status()
+        return {"status": "ok", "detail": f"reachable at {base_url}", "required": True}
+    except Exception as exc:
+        return {"status": "error", "detail": f"unreachable at {base_url}: {exc}", "required": True}
 
 
 async def _check_mcp_server(mcp_client) -> dict:
@@ -71,15 +84,22 @@ async def _check_docker() -> dict:
 
 
 async def check_detailed_health(settings, mcp_client) -> dict:
-    """Probe Ollama, Qdrant, Docker, and mcp-server independently.
+    """Probe Ollama, Qdrant, the embeddings service, Docker, and mcp-server independently.
 
     Returns one entry per dependency in the shape the dashboard expects:
     {status: "ok"|"error", detail: str, required: bool}.
     """
-    ollama, qdrant, docker, mcp_server = await asyncio.gather(
+    ollama, qdrant, embeddings, docker, mcp_server = await asyncio.gather(
         _check_ollama(settings.ollama_base_url),
         _check_qdrant(settings.qdrant_url),
+        _check_embeddings(settings.embeddings_base_url),
         _check_docker(),
         _check_mcp_server(mcp_client),
     )
-    return {"ollama": ollama, "qdrant": qdrant, "docker": docker, "mcp_server": mcp_server}
+    return {
+        "ollama": ollama,
+        "qdrant": qdrant,
+        "embeddings": embeddings,
+        "docker": docker,
+        "mcp_server": mcp_server,
+    }

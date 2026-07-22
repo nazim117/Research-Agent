@@ -19,7 +19,7 @@ const DEFAULT_PROGRESS = {
   step: 'welcome',
   completedSteps: [],
   health: null,
-  models: { chat: null, embed: null },
+  models: { chat: null },
   project: { name: '', jiraKey: '', githubRepo: '' },
 };
 
@@ -52,7 +52,7 @@ function isStepValid(step, progress) {
       return Boolean(progress.health) &&
         Object.values(progress.health).every((s) => s.status === 'ok' || !s.required);
     case 'models':
-      return Boolean(progress.models.chat && progress.models.embed);
+      return Boolean(progress.models.chat);
     case 'credentials':
       return true;
     case 'project':

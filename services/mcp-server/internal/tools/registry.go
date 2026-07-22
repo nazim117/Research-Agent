@@ -95,6 +95,7 @@ var envVarAllowlist = []envVarSpec{
 	{key: "JIRA_API_TOKEN", secret: true},
 	{key: "GITHUB_TOKEN", secret: true},
 	{key: "BRAVE_SEARCH_API_KEY", secret: true},
+	{key: "SEARXNG_BASE_URL", secret: false},
 }
 
 // EnvVarOut is the wire shape for one env var row in the Settings UI.

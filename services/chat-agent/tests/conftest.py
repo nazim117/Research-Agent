@@ -68,6 +68,17 @@ def ollama_up():
 
 
 @pytest.fixture(scope="session")
+def embeddings_up():
+    """Skip if the embeddings service (TEI) is not reachable at
+    settings.embeddings_base_url. Embeddings no longer go through Ollama —
+    see services/chat-agent/embeddings.py.
+    """
+    from config import settings
+    if not _is_reachable(f"{settings.embeddings_base_url}/health"):
+        pytest.skip(f"Embeddings service not reachable at {settings.embeddings_base_url}")
+
+
+@pytest.fixture(scope="session")
 def ollama_chat_model_up(ollama_up):
     """Skip if settings.ollama_chat_model is not pulled in the local Ollama instance.
 

@@ -48,6 +48,7 @@ def _settings():
     return SimpleNamespace(
         ollama_base_url="http://ollama-test:1",
         qdrant_url="http://qdrant-test:2",
+        embeddings_base_url="http://embeddings-test:3",
     )
 
 
@@ -71,6 +72,8 @@ async def test_all_healthy():
     assert result["ollama"] == {"status": "ok", "detail": "reachable at http://ollama-test:1", "required": True}
     assert result["qdrant"]["status"] == "ok"
     assert result["qdrant"]["required"] is True
+    assert result["embeddings"]["status"] == "ok"
+    assert result["embeddings"]["required"] is True
     assert result["docker"]["status"] == "ok"
     assert result["docker"]["required"] is False
     assert result["mcp_server"]["status"] == "ok"
@@ -91,6 +94,25 @@ async def test_ollama_down_does_not_affect_others():
     assert result["ollama"]["status"] == "error"
     assert result["ollama"]["required"] is True
     assert result["qdrant"]["status"] == "ok"
+    assert result["embeddings"]["status"] == "ok"
+    assert result["mcp_server"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_embeddings_down_does_not_affect_others():
+    with (
+        patch(
+            "health.httpx.AsyncClient",
+            side_effect=lambda **kw: _FakeAsyncClient(_make_get_impl(down_urls=["embeddings-test"])),
+        ),
+        patch("health.subprocess.run", return_value=MagicMock(returncode=0, stdout="24.0.0\n")),
+    ):
+        result = await check_detailed_health(_settings(), _mcp(healthy=True))
+
+    assert result["embeddings"]["status"] == "error"
+    assert result["embeddings"]["required"] is True
+    assert result["ollama"]["status"] == "ok"
+    assert result["qdrant"]["status"] == "ok"
     assert result["mcp_server"]["status"] == "ok"
 
 
@@ -108,6 +130,7 @@ async def test_docker_cli_missing_is_optional_failure():
     # Docker being unavailable must not affect required dependencies.
     assert result["ollama"]["status"] == "ok"
     assert result["qdrant"]["status"] == "ok"
+    assert result["embeddings"]["status"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -122,3 +145,4 @@ async def test_mcp_server_down_is_optional_failure():
     assert result["mcp_server"]["required"] is False
     assert result["ollama"]["status"] == "ok"
     assert result["qdrant"]["status"] == "ok"
+    assert result["embeddings"]["status"] == "ok"

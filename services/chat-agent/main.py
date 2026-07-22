@@ -41,7 +41,7 @@ import httpx
 from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, validate_payload
 from config import settings
 from document_state import DocumentStateStore
-from embeddings import embed
+from embeddings import embed, get_model_info as get_embeddings_model_info
 import env_config
 from health import check_detailed_health
 from mcp_client import MCPClient, MCPError
@@ -266,12 +266,13 @@ class ChatRequest(BaseModel):
     project_id: str  # Which project brain owns this conversation.
     session_id: str  # Identifies which conversation inside the project.
     message: str  # The user's input text.
+    web_search: bool = False  # User-triggered — the LLM never decides this itself.
 
 
 class Citation(BaseModel):
     ref: int  # 1-based reference number matching [N] in the reply text.
-    source: str  # The source label (e.g. "jira:KAN-1", "notes.md").
-    chunk_index: int  # Position of this chunk in the original document (0-based).
+    source: str  # The source label (e.g. "jira:KAN-1", "notes.md") — or a URL for web results.
+    chunk_index: int  # Position of this chunk in the original document (0-based); 0 for web results.
 
 
 class ChatResponse(BaseModel):
@@ -477,13 +478,29 @@ async def post_models_pull(req: ModelPullRequest):
 async def get_config():
     """Read-only effective LLM configuration.  Never includes secrets —
     openai_api_key/jira_api_token/github_token are never serialized here.
+
+    The embeddings model name is read live from the embeddings service's own
+    /info endpoint (not a chat-agent-side constant) so it can never drift out
+    of sync with what's actually configured there — and so it degrades to an
+    error message instead of failing this whole route if that service is down.
     """
+    try:
+        embeddings_info = await get_embeddings_model_info()
+        embeddings_model = embeddings_info.get("model_id")
+        embeddings_error = None
+    except HTTPException as exc:
+        embeddings_model = None
+        embeddings_error = str(exc.detail)
+
     return {
         "provider": settings.llm_provider,
         "ollama": {
             "chat_model": settings.ollama_chat_model,
-            "embed_model": settings.ollama_embed_model,
             "base_url": settings.ollama_base_url,
+        },
+        "embeddings": {
+            "model": embeddings_model,
+            "error": embeddings_error,
         },
         "openai": {
             "model": settings.openai_model,
@@ -1199,11 +1216,31 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
             seen_texts.add(c.text)
             relevant_chunks.append(c)
 
+    # 3d. If the user explicitly turned on web search for this message, search
+    # now (before the single LLM call below) and fold results into the same
+    # citation numbering as doc chunks. This is user-triggered, not model-
+    # triggered — the LLM never decides to search on its own — so no second
+    # LLM round-trip is needed; the results are just another context block.
+    web_results: list[dict] = []
+    web_search_error: str | None = None
+    if req.web_search:
+        try:
+            web_response = await _mcp.call("web_search", {"query": req.message, "limit": 5})
+            web_results = web_response.get("results", [])
+        except MCPError as exc:
+            # Degrade, don't fail the whole turn — the LLM can still answer
+            # from RAG/memory/its own knowledge, just without live results.
+            web_search_error = str(exc)
+
     # Build citations list for the API response. ref is 1-based and matches
-    # the [N] numbers injected into the prompt below.
+    # the [N] numbers injected into the prompt below. Web results continue
+    # the same numbering after doc chunks.
     citations = [
         Citation(ref=i + 1, source=c.source, chunk_index=c.chunk_index)
         for i, c in enumerate(relevant_chunks)
+    ] + [
+        Citation(ref=len(relevant_chunks) + i + 1, source=r["url"], chunk_index=0)
+        for i, r in enumerate(web_results)
     ]
 
     if relevant_chunks:
@@ -1240,6 +1277,37 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
                     "--- PROJECT KNOWLEDGE ---\n"
                     f"{doc_lines}\n"
                     "--- END PROJECT KNOWLEDGE ---"
+                ),
+            }
+        )
+
+    # Inject web search results, if the user asked for them (see 3d above).
+    if web_results:
+        web_lines = "\n\n".join(
+            f"[{len(relevant_chunks) + i + 1}] {r['title']} — {r['url']}\n{r['snippet']}"
+            for i, r in enumerate(web_results)
+        )
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The user turned on web search for this message. Live search results "
+                    "are below — cite them by reference number, e.g. [N], the same way "
+                    "you'd cite project knowledge.\n\n"
+                    "--- WEB SEARCH RESULTS ---\n"
+                    f"{web_lines}\n"
+                    "--- END WEB SEARCH RESULTS ---"
+                ),
+            }
+        )
+    elif req.web_search and web_search_error:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    f"The user turned on web search for this message, but the search "
+                    f"failed: {web_search_error}. Tell them the search didn't work, "
+                    "then answer as best you can without it."
                 ),
             }
         )

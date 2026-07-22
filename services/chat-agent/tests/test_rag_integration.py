@@ -1,7 +1,8 @@
-# tests/test_rag_integration.py — real Qdrant + Ollama RAG pipeline tests.
+# tests/test_rag_integration.py — real Qdrant + embeddings-service RAG pipeline tests.
 #
-# These tests call rag.ingest() and rag.retrieve() against live Qdrant and Ollama.
-# Skipped when either is unreachable (conftest.qdrant_up + ollama_up).
+# These tests call rag.ingest() and rag.retrieve() against a live Qdrant and
+# the bundled embeddings service (TEI, not Ollama — see embeddings.py).
+# Skipped when either is unreachable (conftest.qdrant_up + embeddings_up).
 #
 # What is covered (the "rag.py gap" from docs/test-suite-analysis.md §5.2):
 #   - ingest() chunks a document and stores vectors in Qdrant
@@ -18,10 +19,10 @@ from config import settings
 pytestmark = pytest.mark.integration
 
 
-# Fixture that requires BOTH real Qdrant and real Ollama.
+# Fixture that requires BOTH real Qdrant and the real embeddings service.
 @pytest.fixture
-def both_up(qdrant_up, ollama_up):
-    """Composite fixture: skip if either Qdrant or Ollama is unreachable."""
+def both_up(qdrant_up, embeddings_up):
+    """Composite fixture: skip if either Qdrant or the embeddings service is unreachable."""
 
 
 SAMPLE_TEXT = (

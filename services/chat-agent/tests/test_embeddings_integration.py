@@ -1,7 +1,8 @@
-# tests/test_embeddings_integration.py — real Ollama embedding integration tests.
+# tests/test_embeddings_integration.py — real embeddings-service integration tests.
 #
-# These tests call embeddings.embed() against a live Ollama instance running
-# the nomic-embed-text model.  Skipped when Ollama is unreachable (conftest.ollama_up).
+# These tests call embeddings.embed() against a live embeddings service (TEI,
+# see docker-compose.yml's "embeddings" service) serving BAAI/bge-base-en-v1.5.
+# Skipped when unreachable (conftest.embeddings_up).
 #
 # What is covered (the "embeddings.py gap" from docs/test-suite-analysis.md §5.2):
 #   - embed() returns a list of 768 floats (correct dimension for nomic-embed-text)
@@ -13,7 +14,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-async def test_embed_returns_768_floats(ollama_up):
+async def test_embed_returns_768_floats(embeddings_up):
     """embed() returns a list of exactly 768 floats for any input text."""
     from embeddings import embed
 
@@ -24,7 +25,7 @@ async def test_embed_returns_768_floats(ollama_up):
     assert all(isinstance(v, float) for v in vector), "all elements must be float"
 
 
-async def test_embed_is_deterministic(ollama_up):
+async def test_embed_is_deterministic(embeddings_up):
     """Two calls with identical text produce the same vector."""
     from embeddings import embed
 
@@ -36,7 +37,7 @@ async def test_embed_is_deterministic(ollama_up):
     assert v1 == v2, "embed() must return the same vector for the same text"
 
 
-async def test_embed_different_texts_produce_different_vectors(ollama_up):
+async def test_embed_different_texts_produce_different_vectors(embeddings_up):
     """Semantically different texts produce different vectors."""
     from embeddings import embed
 
@@ -46,6 +47,10 @@ async def test_embed_different_texts_produce_different_vectors(ollama_up):
     assert v_hello != v_code, "different texts should produce different vectors"
 
 
-# Empty-string embedding is not a supported use case: Ollama returns an empty
-# embeddings list for "" which causes an IndexError in embeddings.embed().
-# No test here — production code never embeds empty text (chunking skips it).
+async def test_get_model_info_reports_configured_model(embeddings_up):
+    """get_model_info() reflects the model the embeddings service is actually serving."""
+    from embeddings import get_model_info
+
+    info = await get_model_info()
+
+    assert "model_id" in info

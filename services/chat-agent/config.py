@@ -48,14 +48,18 @@ class Settings(BaseSettings):
     # Port the uvicorn server listens on.
     port: int = 8084
 
-    # Ollama (local embedding model)
+    # Ollama (local chat model only — see EMBEDDINGS_BASE_URL below for embeddings).
     # Ollama runs on the host machine (or in its own container).
     # Default port is 11434; override with OLLAMA_BASE_URL if running elsewhere.
     ollama_base_url: str = "http://localhost:11434"
 
-    # The embedding model to use.  nomic-embed-text produces 768-dimensional vectors
-    # and runs efficiently on CPU.  Must already be pulled: `ollama pull nomic-embed-text`
-    ollama_embed_model: str = "nomic-embed-text"
+    # Embeddings — served by the bundled Text Embeddings Inference (TEI) container
+    # (see docker-compose.yml's "embeddings" service), not Ollama. The model it
+    # serves (BAAI/bge-base-en-v1.5, 768-dim) is fixed by that service's
+    # own MODEL_ID and is not user-configurable — changing it would invalidate
+    # every existing embedded document and conversation. Default port 8082 for
+    # native dev; the docker-compose network resolves "embeddings" by name.
+    embeddings_base_url: str = "http://localhost:8082"
 
     # Qdrant (vector database)
     # Qdrant runs as a Docker service (see docker-compose.yml).

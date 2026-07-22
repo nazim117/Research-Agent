@@ -21,8 +21,8 @@ export const deleteProject = (id) => request('DELETE', `/projects/${id}`);
 // Rename hits the real PATCH /projects/{id} endpoint — not a stub.
 export const renameProject = (id, name) => patchProject(id, { name });
 
-export const chat = (projectId, sessionId, message) =>
-  request('POST', '/chat', { project_id: projectId, session_id: sessionId, message });
+export const chat = (projectId, sessionId, message, webSearch = false) =>
+  request('POST', '/chat', { project_id: projectId, session_id: sessionId, message, web_search: webSearch });
 
 export const getHistory = (projectId, sessionId = 'default') =>
   request('GET', `/projects/${projectId}/history?session_id=${encodeURIComponent(sessionId)}`);
@@ -138,14 +138,20 @@ export async function pullModel(modelName, onProgress) {
 
 export const getLlmConfig = () => request('GET', '/config');
 
-// Lightweight reachability check reused by both the LLM Models and
-// Embeddings tabs (embeddings always route through Ollama regardless of
-// chat provider — see services/chat-agent/config.py). Derived from the real
-// aggregate health check rather than its own endpoint.
+// Lightweight reachability checks, both derived from the real aggregate
+// health check rather than their own endpoints.
 export async function testOllamaConnection() {
   const health = await checkSystemHealth();
   const ollama = health.ollama;
   return { ok: ollama.status === 'ok', message: ollama.detail };
+}
+
+// Embeddings run through the bundled embeddings service (see
+// services/chat-agent/config.py's EMBEDDINGS_BASE_URL), not Ollama.
+export async function testEmbeddingsConnection() {
+  const health = await checkSystemHealth();
+  const embeddings = health.embeddings;
+  return { ok: embeddings.status === 'ok', message: embeddings.detail };
 }
 
 export const getIntegrationStatus = () => request('GET', '/integrations/status');

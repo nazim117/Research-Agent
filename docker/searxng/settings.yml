@@ -1,0 +1,19 @@
+# Minimal override mounted into the bundled "searxng" docker-compose service
+# (see ../../docker-compose.yml). SearXNG merges this over its own built-in
+# defaults via use_default_settings — we only need to override what a fresh
+# install ships with disabled: the JSON API (used by
+# services/mcp-server/internal/tools/web.go's searxngSearch).
+#
+# This is a local, single-user instance with no public exposure, so a fixed
+# secret_key checked into the repo is fine here — it is not protecting a
+# publicly reachable deployment.
+
+use_default_settings: true
+
+server:
+  secret_key: "research-agent-local-searxng-secret-key"
+
+search:
+  formats:
+    - html
+    - json

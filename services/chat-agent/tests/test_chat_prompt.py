@@ -429,3 +429,143 @@ async def test_two_chunks_produce_ordered_citations():
     assert knowledge_block is not None
     assert "[1]" in knowledge_block["content"]
     assert "[2]" in knowledge_block["content"]
+
+
+# ---------------------------------------------------------------------------
+# Web search tests — user-triggered (req.web_search), not model-triggered.
+# See main.py's post_chat step 3d.
+# ---------------------------------------------------------------------------
+
+FAKE_WEB_RESULTS = {
+    "results": [
+        {"title": "Example result", "url": "https://example.com/a", "snippet": "About example A."},
+    ]
+}
+
+
+@pytest.mark.asyncio
+async def test_web_search_off_by_default_never_calls_mcp():
+    """Omitting web_search (default False) must never call mcp.call at all."""
+    async def _spy_chat(messages):
+        return "answer"
+
+    with (
+        patch("main.embed", side_effect=_fake_embed),
+        patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
+        patch("main.chat", side_effect=_spy_chat),
+        patch("main.store.history", new_callable=AsyncMock, return_value=[]),
+        patch("main.store.append", new_callable=AsyncMock),
+        patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
+        patch("main.vstore.upsert", new_callable=AsyncMock),
+        patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main._mcp") as mcp,
+    ):
+        mcp.call = AsyncMock(return_value=FAKE_WEB_RESULTS)
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/chat", json={
+                "project_id": FAKE_PROJECT_ID,
+                "session_id": FAKE_SESSION_ID,
+                "message": "What's the weather today?",
+            })
+
+    assert resp.status_code == 200
+    mcp.call.assert_not_called()
+    assert resp.json()["citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_web_search_on_injects_results_and_citations():
+    """web_search=true calls mcp.call("web_search", ...) and folds results into
+    both the prompt and the citations array, numbered after doc chunks.
+    """
+    captured_messages = []
+
+    async def _spy_chat(messages):
+        captured_messages.extend(messages)
+        return "Here's what I found [1]."
+
+    with (
+        patch("main.embed", side_effect=_fake_embed),
+        patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
+        patch("main.chat", side_effect=_spy_chat),
+        patch("main.store.history", new_callable=AsyncMock, return_value=[]),
+        patch("main.store.append", new_callable=AsyncMock),
+        patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
+        patch("main.vstore.upsert", new_callable=AsyncMock),
+        patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main._mcp") as mcp,
+    ):
+        mcp.call = AsyncMock(return_value=FAKE_WEB_RESULTS)
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/chat", json={
+                "project_id": FAKE_PROJECT_ID,
+                "session_id": FAKE_SESSION_ID,
+                "message": "What's the latest release of Qdrant?",
+                "web_search": True,
+            })
+
+    assert resp.status_code == 200
+    mcp.call.assert_awaited_once_with(
+        "web_search", {"query": "What's the latest release of Qdrant?", "limit": 5}
+    )
+
+    data = resp.json()
+    assert data["citations"] == [{"ref": 1, "source": "https://example.com/a", "chunk_index": 0}]
+
+    web_block = next(
+        (m for m in captured_messages if "WEB SEARCH RESULTS" in m.get("content", "")),
+        None,
+    )
+    assert web_block is not None
+    assert "https://example.com/a" in web_block["content"]
+    assert "[1]" in web_block["content"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_failure_degrades_gracefully():
+    """If the search backend errors, the chat turn still succeeds — the LLM
+    is told the search failed instead of the whole request 500ing.
+    """
+    from mcp_client import MCPError
+
+    captured_messages = []
+
+    async def _spy_chat(messages):
+        captured_messages.extend(messages)
+        return "I couldn't search, but here's what I know."
+
+    with (
+        patch("main.embed", side_effect=_fake_embed),
+        patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
+        patch("main.chat", side_effect=_spy_chat),
+        patch("main.store.history", new_callable=AsyncMock, return_value=[]),
+        patch("main.store.append", new_callable=AsyncMock),
+        patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
+        patch("main.vstore.upsert", new_callable=AsyncMock),
+        patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main._mcp") as mcp,
+    ):
+        mcp.call = AsyncMock(side_effect=MCPError("search backend unreachable"))
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/chat", json={
+                "project_id": FAKE_PROJECT_ID,
+                "session_id": FAKE_SESSION_ID,
+                "message": "What's new in Qdrant?",
+                "web_search": True,
+            })
+
+    assert resp.status_code == 200
+    assert resp.json()["citations"] == []
+
+    error_block = next(
+        (m for m in captured_messages if "search failed" in m.get("content", "")),
+        None,
+    )
+    assert error_block is not None
+    assert "search backend unreachable" in error_block["content"]

@@ -1,16 +1,13 @@
 import { useEffect, useState } from 'react';
 import * as api from '../../api.js';
 import { IconCheck, IconAlert, IconLoader } from '../../icons.jsx';
-import ModelPickerRow from '../../shared/ModelPickerRow.jsx';
-
-const EMBED_MODELS = ['nomic-embed-text'];
 
 function TestButton() {
   const [state, setState] = useState(null);
 
   async function handleClick() {
     setState('testing');
-    setState(await api.testOllamaConnection());
+    setState(await api.testEmbeddingsConnection());
   }
 
   return (
@@ -28,43 +25,34 @@ function TestButton() {
 }
 
 export default function EmbeddingsTab() {
-  const [embedModel, setEmbedModel] = useState('nomic-embed-text');
   const [config, setConfig] = useState(null);
 
   useEffect(() => {
-    api.getLlmConfig().then((c) => {
-      setConfig(c);
-      setEmbedModel(c.ollama.embed_model);
-    });
+    api.getLlmConfig().then(setConfig);
   }, []);
 
   return (
     <div className="settings-section">
       <div className="wizard-step-desc">
-        Embeddings always run through Ollama, regardless of which chat provider is configured.
-        The active model is set via <code>OLLAMA_EMBED_MODEL</code> in your <code>.env</code>
-        file — pull it below so it's available locally.
+        Embeddings are served by a bundled, dedicated embedding server (not Ollama, and not
+        whichever cloud provider is active for chat) so documents and conversation memory stay
+        searchable no matter which chat provider you pick. The model is fixed by design — changing
+        it later would invalidate every document and conversation already embedded, so there's no
+        picker here.
       </div>
 
       {config && (
         <div className="wizard-status-row">
           <div className="wizard-status-main">
-            <div className="wizard-status-name">Active model</div>
-            <div className="wizard-status-detail">{config.ollama.embed_model}</div>
+            <div className="wizard-status-name">Embedding model</div>
+            <div className={`wizard-status-detail ${config.embeddings.error ? 'error' : ''}`}>
+              {config.embeddings.model || config.embeddings.error || 'Unknown'}
+            </div>
           </div>
         </div>
       )}
 
       <TestButton />
-
-      <div className="edit-label mt-12">Pull a model</div>
-      <ModelPickerRow
-        kind="embed"
-        label="Embedding model"
-        options={EMBED_MODELS}
-        selectedModel={embedModel}
-        onInstalled={(_kind, model) => setEmbedModel(model)}
-      />
     </div>
   );
 }

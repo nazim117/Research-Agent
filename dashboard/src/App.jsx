@@ -487,6 +487,7 @@ function ChatPane({ projectId, onActionDrafted }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -509,7 +510,7 @@ function ChatPane({ projectId, onActionDrafted }) {
     setBusy(true);
     setMessages(prev => [...prev, { role: 'user', content: text }]);
     try {
-      const res = await api.chat(projectId, CHAT_SESSION_ID, text);
+      const res = await api.chat(projectId, CHAT_SESSION_ID, text, webSearchEnabled);
       setMessages(prev => [...prev, { role: 'assistant', content: res.reply, citations: res.citations ?? [] }]);
       if (res.reply?.includes('Drafted action')) onActionDrafted();
     } catch (err) {
@@ -555,7 +556,11 @@ function ChatPane({ projectId, onActionDrafted }) {
                   <ul className="sources-list">
                     {m.citations.map(c => (
                       <li key={c.ref} className="sources-item" data-testid="citation-item">
-                        [{c.ref}] {c.source} · chunk {c.chunk_index}
+                        {c.source.startsWith('http') ? (
+                          <>[{c.ref}] <a href={c.source} target="_blank" rel="noreferrer">{c.source}</a></>
+                        ) : (
+                          <>[{c.ref}] {c.source} · chunk {c.chunk_index}</>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -578,6 +583,16 @@ function ChatPane({ projectId, onActionDrafted }) {
       </div>
 
       <div className="chat-input-area">
+        <button
+          type="button"
+          className={`btn btn-sm web-search-toggle ${webSearchEnabled ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setWebSearchEnabled(v => !v)}
+          aria-pressed={webSearchEnabled}
+          title={webSearchEnabled ? 'Web search is on for the next message' : 'Turn on web search for the next message'}
+          data-testid="chat-web-search-toggle"
+        >
+          🌐 Web search
+        </button>
         <textarea
           className="chat-textarea"
           value={input}

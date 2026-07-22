@@ -12,6 +12,11 @@ services:
     environment:
       - PORT=8083
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
+      # Bundled, no-API-key web search backend — takes precedence over Brave
+      # when set (see internal/tools/web.go's dispatch order).
+      - SEARXNG_BASE_URL=http://searxng:8080
+    depends_on:
+      - searxng
     restart: unless-stopped
 
   dashboard:
@@ -38,10 +43,14 @@ services:
       # Inside Docker Compose, services find each other by service name.
       # "qdrant" resolves to the qdrant container on the shared network.
       - QDRANT_URL=http://qdrant:6333
-      # Ollama runs on the host machine, not in Docker.
+      # Ollama runs on the host machine, not in Docker — only used for local
+      # chat (Settings > LLM Models > "Local (Ollama)"), not embeddings.
       # host.docker.internal is a special DNS name that Docker resolves to the
       # host machine's IP address from inside a container.
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      # Embeddings are served by the bundled "embeddings" service below
+      # (Text Embeddings Inference), not Ollama — resolved by service name.
+      - EMBEDDINGS_BASE_URL=http://embeddings:80
       # PM I/O is routed through the mcp-server; chat-agent holds no vendor creds.
       - MCP_BASE_URL=http://mcp-server:8083
     volumes:
@@ -49,6 +58,7 @@ services:
     depends_on:
       - qdrant
       - mcp-server
+      - embeddings
     restart: unless-stopped
 
   # qdrant — vector database for semantic memory (Step 2+).
@@ -62,11 +72,55 @@ services:
       - qdrant-data:/qdrant/storage
     restart: unless-stopped
 
+  # embeddings — Hugging Face Text Embeddings Inference (TEI), a lightweight
+  # purpose-built embedding server (not Ollama's general-purpose LLM runtime).
+  # Serves BAAI/bge-base-en-v1.5 (768-dim), matching the dimension every
+  # existing Qdrant collection is already created with. Originally configured
+  # for nomic-ai/nomic-embed-text-v1.5, but that model's current config.json
+  # on the Hub has a duplicate `max_position_embeddings` field that TEI
+  # cpu-1.9's parser rejects outright (crash-loops on startup) — bge-base is
+  # TEI's flagship-supported architecture (plain BERT, no custom modeling
+  # code) and avoids that class of problem entirely, same dimension, same
+  # zero-migration property. The model is fixed here deliberately either way:
+  # changing it after documents exist would invalidate every embedded
+  # document and conversation (see services/chat-agent/embeddings.py). CPU
+  # image; see TEI's docs for GPU tags if your hardware/Docker setup supports
+  # passthrough (not configured here).
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    command: ["--model-id", "BAAI/bge-base-en-v1.5"]
+    ports:
+      - "8082:80"
+    volumes:
+      - tei-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s   # first start downloads the model from Hugging Face Hub
+    restart: unless-stopped
+
+  # searxng — self-hosted meta-search engine, the default web_search backend
+  # for the agent (see internal/tools/web.go). No API key, no per-query cost,
+  # unlike Brave — fits an open-source project's "just works" bar better.
+  # The mounted settings.yml enables JSON output, which is off by default
+  # (queries would otherwise 403) — see docker/searxng/settings.yml.
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "8085:8080"
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped
+
 volumes:
   # Persists the SQLite database across container restarts.
   chat-db:
   # Persists Qdrant vector index across container restarts.
   qdrant-data:
+  # Persists the downloaded embedding model so it isn't re-fetched every start.
+  tei-data:
 
 networks:
   default:

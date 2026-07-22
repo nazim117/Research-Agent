@@ -394,6 +394,10 @@ body.pane-resizing * { user-select: none; }
   font-weight: 600; flex-shrink: 0;
 }
 
+.web-search-toggle {
+  height: 42px; border-radius: var(--r-pill); flex-shrink: 0;
+}
+
 /* ─── Tools panel (legacy class kept for .section reuse) ─────── */
 
 .section { border-bottom: 1px solid var(--border-subtle); padding: 14px 16px; }

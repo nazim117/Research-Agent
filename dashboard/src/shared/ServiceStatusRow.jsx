@@ -3,6 +3,7 @@ import { IconCheck, IconAlert } from '../icons.jsx';
 const SERVICE_LABELS = {
   ollama: 'Ollama',
   qdrant: 'Qdrant',
+  embeddings: 'Embeddings',
   docker: 'Docker',
   mcp_server: 'mcp-server',
 };
@@ -10,6 +11,7 @@ const SERVICE_LABELS = {
 const DOCS_LINKS = {
   ollama: 'https://ollama.com/download',
   qdrant: 'https://qdrant.tech/documentation/quick-start/',
+  embeddings: 'https://github.com/huggingface/text-embeddings-inference',
   docker: 'https://docs.docker.com/desktop/',
   mcp_server: 'https://github.com',
 };

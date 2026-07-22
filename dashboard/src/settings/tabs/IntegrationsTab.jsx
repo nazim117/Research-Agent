@@ -4,7 +4,7 @@ import { IconAlert, IconCheck, IconLoader, IconRefresh } from '../../icons.jsx';
 import { useHealthChecks } from '../../shared/useHealthChecks.js';
 import ServiceStatusRow from '../../shared/ServiceStatusRow.jsx';
 
-const SERVICES = ['ollama', 'qdrant', 'docker', 'mcp_server'];
+const SERVICES = ['ollama', 'qdrant', 'embeddings', 'docker', 'mcp_server'];
 const REQUIRED_VARS = {
   jira: ['JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'],
   github: ['GITHUB_TOKEN'],

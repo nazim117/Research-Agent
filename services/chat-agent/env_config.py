@@ -32,7 +32,6 @@ class EnvVarSpec(TypedDict):
 OWNED_VARS: list[EnvVarSpec] = [
     {"key": "LLM_PROVIDER", "secret": False},
     {"key": "OLLAMA_CHAT_MODEL", "secret": False},
-    {"key": "OLLAMA_EMBED_MODEL", "secret": False},
     {"key": "OLLAMA_BASE_URL", "secret": False},
     {"key": "OPENAI_BASE_URL", "secret": False},
     {"key": "OPENAI_MODEL", "secret": False},

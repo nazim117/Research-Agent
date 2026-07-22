@@ -27,8 +27,10 @@ var (
 )
 
 // webSearch dispatches to the best available search backend:
-//  1. Brave Search API  — when BRAVE_SEARCH_API_KEY is set (recommended, free tier)
-//  2. DuckDuckGo HTML   — scraped from lite.duckduckgo.com, no key required
+//  1. SearXNG           — when SEARXNG_BASE_URL is set (default once bundled via
+//     docker-compose.yml; no API key, no per-query cost)
+//  2. Brave Search API  — when BRAVE_SEARCH_API_KEY is set (free tier, requires signup)
+//  3. DuckDuckGo HTML   — scraped from lite.duckduckgo.com, last-resort fallback
 func webSearch(args map[string]any) (mcp.ToolCallResult, error) {
 	query, errResult, err := requireString(args, "query")
 	if errResult != nil {
@@ -42,10 +44,65 @@ func webSearch(args map[string]any) (mcp.ToolCallResult, error) {
 		limit = 10
 	}
 
+	if baseURL := os.Getenv("SEARXNG_BASE_URL"); baseURL != "" {
+		return searxngSearch(query, limit, baseURL)
+	}
 	if apiKey := os.Getenv("BRAVE_SEARCH_API_KEY"); apiKey != "" {
 		return braveSearch(query, limit, apiKey)
 	}
 	return ddgHtmlSearch(query, limit)
+}
+
+// searxngSearch calls a self-hosted SearXNG instance's JSON search API
+// (https://docs.searxng.org/dev/search_api.html). Requires the instance to
+// have "json" enabled in search.formats — see docker/searxng/settings.yml.
+func searxngSearch(query string, limit int, baseURL string) (mcp.ToolCallResult, error) {
+	apiURL := fmt.Sprintf(
+		"%s/search?q=%s&format=json&categories=general",
+		strings.TrimSuffix(baseURL, "/"), url.QueryEscape(query),
+	)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return textErr(fmt.Sprintf("searxng: build request: %v", err))
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := webClient.Do(req)
+	if err != nil {
+		return textErr(fmt.Sprintf("searxng: request failed: %v", err))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return textErr(fmt.Sprintf("searxng: status %d: %s", resp.StatusCode, string(body)))
+	}
+
+	var data struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return textErr(fmt.Sprintf("searxng: decode response: %v", err))
+	}
+
+	type result struct {
+		Title   string `json:"title"`
+		URL     string `json:"url"`
+		Snippet string `json:"snippet"`
+	}
+	var results []result
+	for _, r := range data.Results {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, result{Title: r.Title, URL: r.URL, Snippet: r.Content})
+	}
+
+	return textResult(map[string]any{"query": query, "count": len(results), "results": results})
 }
 
 // braveSearch calls the Brave Search API (https://api.search.brave.com).
@@ -235,7 +292,7 @@ func webDefinitions() []mcp.ToolDefinition {
 	return []mcp.ToolDefinition{
 		{
 			Name:        "web_search",
-			Description: "Search the web for current information and return titles, URLs, and snippets. Uses Brave Search API if BRAVE_SEARCH_API_KEY is set, otherwise falls back to DuckDuckGo. Use during execute steps when the agent needs real-time or recent information.",
+			Description: "Search the web for current information and return titles, URLs, and snippets. Uses SearXNG if SEARXNG_BASE_URL is set, else Brave Search API if BRAVE_SEARCH_API_KEY is set, otherwise falls back to DuckDuckGo. Use during execute steps when the agent needs real-time or recent information.",
 			InputSchema: mcp.JSONSchema{
 				Type: "object",
 				Properties: map[string]mcp.Property{
