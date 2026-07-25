@@ -21,8 +21,8 @@ system is the stack described below.
 | qdrant | Docker image `qdrant/qdrant` | — | 6333 |
 | embeddings | Docker image `ghcr.io/huggingface/text-embeddings-inference` | — | 8082 |
 | searxng | Docker image `searxng/searxng` | — | 8085 |
-| dashboard | `dashboard/` | React / Vite | 5173 (dev) |
-| extension | `extension/` | Chrome MV3 side panel | — |
+| dashboard | `clients/dashboard/` | React / Vite | 5173 (dev) |
+| extension | `clients/extension/` | Chrome MV3 side panel | — |
 | ollama | host service (optional — local chat only, not embeddings) | — | 11434 |
 
 `docker-compose.yml` defines `mcp-server`, `dashboard`, `chat-agent`, `qdrant`,
@@ -72,7 +72,7 @@ go test ./internal/mcp/... -run TestName -v   # single test
 ### dashboard (React)
 
 ```bash
-cd dashboard
+cd clients/dashboard
 npm install
 npm run dev            # http://localhost:5173, proxies /api -> localhost:8080
 npm run lint
@@ -137,7 +137,7 @@ data across projects.
    external writes always require human approval via
    `POST /actions/{id}/approve`, which calls through `mcp_client.py`.
 
-### Settings & Setup Wizard (`dashboard/src/settings/`, `dashboard/src/wizard/`)
+### Settings & Setup Wizard (`clients/dashboard/src/settings/`, `clients/dashboard/src/wizard/`)
 
 The dashboard has a first-run Setup Wizard and an ongoing Settings page, both
 backed by real endpoints (not stubs) added to `main.py`: `GET /health/detailed`,

@@ -64,8 +64,8 @@ natively for hot reload during development (see [Quick Start](#quick-start)):
 | qdrant | Docker image `qdrant/qdrant` | Vector database for conversation and document embeddings |
 | embeddings | Docker image `ghcr.io/huggingface/text-embeddings-inference` | Bundled, purpose-built embedding server (BAAI/bge-base-en-v1.5) — always used for RAG/memory, regardless of which chat provider is active |
 | searxng | Docker image `searxng/searxng` | Self-hosted web search backend for the agent's optional web-search toggle — no API key required |
-| dashboard | `dashboard/` | React UI on port 5173 — `npm run dev` for hot reload, or the Docker Compose service |
-| extension | `extension/` | Chrome side panel for chatting, ingesting current pages, syncing, and approving actions |
+| dashboard | `clients/dashboard/` | React UI on port 5173 — `npm run dev` for hot reload, or the Docker Compose service |
+| extension | `clients/extension/` | Chrome side panel for chatting, ingesting current pages, syncing, and approving actions |
 | ollama | host service (optional) | Only needed if you choose local chat in Settings > LLM Models — not used for embeddings |
 
 ### Repository Layout
@@ -95,16 +95,17 @@ services/
     internal/mcp/           Tool-call HTTP server (GET /tools, POST /tools/call)
     internal/tools/         jira.go, github.go, web.go, files.go, memory.go — one file per tool integration
 
-dashboard/
-  src/App.jsx               Research Agent dashboard UI
-  src/api.js                API wrapper for chat-agent routes
-  vite.config.js            Dev proxy from /api to localhost:8080
+clients/
+  dashboard/
+    src/App.jsx               Research Agent dashboard UI
+    src/api.js                API wrapper for chat-agent routes
+    vite.config.js            Dev proxy from /api to localhost:8080
 
-extension/
-  sidepanel.js              Chrome side panel UI logic
-  background.js             Active-tab text extraction broker
-  content.js                Page text extraction content script
-  sidepanel.html            Extension UI shell
+  extension/
+    sidepanel.js              Chrome side panel UI logic
+    background.js             Active-tab text extraction broker
+    content.js                Page text extraction content script
+    sidepanel.html            Extension UI shell
 
 scripts/
   start.ps1                 Windows one-command dev startup helper (see Quick Start)
@@ -378,7 +379,7 @@ source venv/bin/activate
 ### 3. Start the dashboard
 
 ```bash
-cd dashboard
+cd clients/dashboard
 npm install
 npm run dev
 ```
@@ -391,7 +392,7 @@ the **Settings** page.
 
 ### 4. Use the extension
 
-See [extension/README.md](extension/README.md). The extension talks directly to
+See [clients/extension/README.md](clients/extension/README.md). The extension talks directly to
 `http://localhost:8080`.
 
 ## Running Tests
@@ -414,7 +415,7 @@ go build ./... && go vet ./... && gofmt -l . && go test ./... -v
 Dashboard lint:
 
 ```bash
-cd dashboard
+cd clients/dashboard
 npm run lint
 ```
 
@@ -422,7 +423,7 @@ npm run lint
 
 - `mcp-server` (Go, port 8083) is an **active** dependency — `chat-agent` routes
   all Jira/GitHub calls through it. Always start it alongside Qdrant.
-- `dashboard/vite.config.js` proxies `/api` to `localhost:8080` for
+- `clients/dashboard/vite.config.js` proxies `/api` to `localhost:8080` for
   development (`npm run dev`, port 5173) — this is the only supported way to
   run the dashboard. The `dashboard` Docker Compose service's `nginx.conf` is
   currently broken; don't use `docker compose up dashboard`.

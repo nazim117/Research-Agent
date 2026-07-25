@@ -39,7 +39,7 @@
       "command": "npm",
       "args": ["run", "dev"],
       "options": {
-        "cwd": "${workspaceFolder}/dashboard"
+        "cwd": "${workspaceFolder}/clients/dashboard"
       },
       "isBackground": true,
       "problemMatcher": [],

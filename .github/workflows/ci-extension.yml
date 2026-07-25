@@ -4,11 +4,11 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'extension/**'
+      - 'clients/extension/**'
   pull_request:
     branches: [ "main" ]
     paths:
-      - 'extension/**'
+      - 'clients/extension/**'
 
 concurrency:
   group: ci-extension-${{ github.ref }}
@@ -29,12 +29,12 @@ jobs:
 
       - name: Validate JS syntax
         run: |
-          node --check extension/background.js
-          node --check extension/content.js
-          node --check extension/sidepanel.js
+          node --check clients/extension/background.js
+          node --check clients/extension/content.js
+          node --check clients/extension/sidepanel.js
 
       - name: Package extension
-        run: zip -r extension.zip extension/ -x "extension/*.md"
+        run: zip -r extension.zip clients/extension/ -x "clients/extension/*.md"
 
       - name: Upload extension artifact
         uses: actions/upload-artifact@v4

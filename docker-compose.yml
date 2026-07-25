@@ -24,11 +24,9 @@ services:
     restart: unless-stopped
 
   dashboard:
-    build: ./dashboard
+    build: ./clients/dashboard
     ports:
       - "5173:5173"
-    # depends_on:
-    #   - agent-executor
 
   # chat-agent — personal AI agent service (Steps 1–4 of the build plan).
   # Runs on port 8080; persists conversation history in a named Docker volume.

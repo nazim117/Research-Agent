@@ -22,7 +22,7 @@ Ollama must also be running with `nomic-embed-text` pulled.
 1. Open Chrome and go to `chrome://extensions`
 2. Enable **Developer mode** using the toggle in the top-right corner
 3. Click **Load unpacked**
-4. Select the `extension/` folder (the folder that contains `manifest.json`)
+4. Select the `clients/extension/` folder (the folder that contains `manifest.json`)
 5. The "Chat Agent" extension appears in the list — no errors should be shown
 
 ## Opening the side panel

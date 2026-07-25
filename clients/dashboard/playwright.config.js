@@ -1,6 +1,6 @@
 // playwright.config.js — Playwright end-to-end test configuration.
 //
-// Tests live in dashboard/e2e/ and drive the React/Vite dashboard at
+// Tests live in clients/dashboard/e2e/ and drive the React/Vite dashboard at
 // http://localhost:5173. All /api calls are intercepted by Playwright's
 // route handler (see e2e/mocks.js) and fulfilled with canned JSON —
 // the real chat-agent backend does NOT need to be running.
