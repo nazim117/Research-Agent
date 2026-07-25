@@ -6,9 +6,27 @@
  */
 
 :root {
-  --palette-prussian-blue:    #00072d;
-  --palette-deep-navy:        #001c55;
-  --palette-imperial-blue:    #0a2472;
-  --palette-cornflower-ocean: #0e6ba8;
+  /* Neutral scale — dark surfaces, darkest to lightest */
+  --palette-neutral-950: #0a0b0d;  /* canvas */
+  --palette-neutral-925: #0e0f12;  /* inset */
+  --palette-neutral-900: #16181c;  /* base / panel */
+  --palette-neutral-850: #1b1e23;  /* surface */
+  --palette-neutral-800: #22262b;  /* raised */
+  --palette-neutral-750: #2a2f36;  /* one step lighter than raised, for hover/pressed states */
+
+  /* Text scale */
+  --palette-white: #f6f6f7;
+  --palette-fog:   #dcdce0;
+  --palette-slate: #b0b4bc;
+
+  /* Accent (brand blue) */
   --palette-frosted-blue:     #a6e1fa;
+  --palette-frosted-blue-dim: #7fb8d4;  /* darker accent tint for hover/pressed states */
+
+  /* State colors */
+  --palette-green:        #3fb950;
+  --palette-green-strong: #2ea043;  /* btn-primary border shade */
+  --palette-amber:        #d29922;
+  --palette-red:           #f85149;
+  --palette-red-strong:    #e5484d;  /* danger fallback shade */
 }

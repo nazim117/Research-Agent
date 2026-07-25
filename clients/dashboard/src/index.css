@@ -9,27 +9,27 @@
      only, used sparingly for focus rings, active states, and links —
      never as a whole-panel fill. --bg-canvas is the page background that
      shows through the gaps between floating panels. */
-  --bg-canvas:  #0a0b0d;
-  --bg-inset:   #0e0f12;
-  --bg-base:    #16181c;
-  --bg-surface: #1b1e23;
-  --bg-panel:   #16181c;
-  --bg-raised:  #22262b;
+  --bg-canvas:  var(--palette-neutral-950);
+  --bg-inset:   var(--palette-neutral-925);
+  --bg-base:    var(--palette-neutral-900);
+  --bg-surface: var(--palette-neutral-850);
+  --bg-panel:   var(--palette-neutral-900);
+  --bg-raised:  var(--palette-neutral-800);
 
   --border:        rgba(255, 255, 255, 0.14);
   --border-subtle: rgba(255, 255, 255, 0.07);
 
-  --text:    #f6f6f7;
-  --text-2:  #dcdce0;
-  --text-3:  #b0b4bc;
+  --text:    var(--palette-white);
+  --text-2:  var(--palette-fog);
+  --text-3:  var(--palette-slate);
 
   --accent:        var(--palette-frosted-blue);
   --accent-subtle: rgba(166, 225, 250, 0.16);
-  --green:         #3fb950;
+  --green:         var(--palette-green);
   --green-subtle:  rgba(63, 185, 80, 0.08);
-  --amber:         #d29922;
+  --amber:         var(--palette-amber);
   --amber-subtle:  rgba(210, 153, 34, 0.1);
-  --red:           #f85149;
+  --red:           var(--palette-red);
   --red-subtle:    rgba(248, 81, 73, 0.08);
 
   --r-sm:   6px;
@@ -222,7 +222,7 @@ body.pane-resizing * { user-select: none; }
   color: var(--text-3); cursor: pointer; border-radius: var(--r-sm, 4px);
 }
 .source-delete-btn:hover {
-  color: var(--danger, #e5484d); background: var(--bg-raised);
+  color: var(--danger, var(--palette-red-strong)); background: var(--bg-raised);
 }
 
 /* ─── Studio pane ─────────────────────────────────────────── */
@@ -284,7 +284,7 @@ body.pane-resizing * { user-select: none; }
 .btn:active:not(:disabled) { transform: scale(0.97); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.btn-primary { background: var(--green); border-color: #2ea043; color: #fff; }
+.btn-primary { background: var(--green); border-color: var(--palette-green-strong); color: #fff; }
 .btn-primary:hover:not(:disabled) { filter: brightness(1.1); }
 
 .btn-secondary {
