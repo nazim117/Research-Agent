@@ -4,21 +4,21 @@
 # schedule_review (SM-2) exhaustively, and the HTTP routes.
 
 import json
-import sys
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from flashcards import (
-    generate_candidates,
-    _parse_generation_json,
-    schedule_review,
     FlashcardStore,
+    _parse_generation_json,
+    generate_candidates,
+    schedule_review,
 )
 
 

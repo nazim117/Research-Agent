@@ -9,6 +9,8 @@
 #   - Non-JSON content[0].text raises MCPError
 #   - Empty content list returns {}
 #   - httpx.RequestError (connection refused) raises MCPError
+#   - Every call() invocation is logged to the toolbox, on both the success
+#     and failure paths
 
 import json
 
@@ -16,7 +18,7 @@ import httpx
 import pytest
 
 from mcp_client import MCPClient, MCPError
-
+from toolbox import ToolboxStore
 
 # ---------------------------------------------------------------------------
 # Fake transport helpers
@@ -70,7 +72,7 @@ def _error_response(message: str) -> httpx.Response:
 async def test_call_success_returns_parsed_dict(result):
     """Successful response → call() returns the parsed result dict."""
     client = MCPClient(transport=_StaticTransport(_ok_response(result)))
-    out = await client.call("web_search", {"query": "project = A"})
+    out = await client.call("web_search", {"query": "project = A"}, project_id="proj-1")
     assert out == result
 
 
@@ -78,7 +80,7 @@ async def test_call_is_error_raises_mcp_error():
     """isError=true in the response body → MCPError raised with tool name in message."""
     client = MCPClient(transport=_StaticTransport(_error_response("tool is not configured")))
     with pytest.raises(MCPError, match="tool is not configured"):
-        await client.call("web_search", {"query": "project = A"})
+        await client.call("web_search", {"query": "project = A"}, project_id="proj-1")
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 500, 503])
@@ -87,7 +89,7 @@ async def test_call_non_2xx_raises_mcp_error(status_code):
     resp = httpx.Response(status_code, text="error body")
     client = MCPClient(transport=_StaticTransport(resp))
     with pytest.raises(MCPError) as exc_info:
-        await client.call("web_fetch", {"key": "A-1"})
+        await client.call("web_fetch", {"key": "A-1"}, project_id="proj-1")
     assert exc_info.value.status_code == status_code
 
 
@@ -97,7 +99,7 @@ async def test_call_non_json_text_raises_mcp_error():
     resp = httpx.Response(200, json=body)
     client = MCPClient(transport=_StaticTransport(resp))
     with pytest.raises(MCPError, match="non-JSON"):
-        await client.call("web_fetch", {"key": "A-1"})
+        await client.call("web_fetch", {"key": "A-1"}, project_id="proj-1")
 
 
 async def test_call_empty_content_returns_empty_dict():
@@ -105,7 +107,7 @@ async def test_call_empty_content_returns_empty_dict():
     body = {"content": [], "isError": False}
     resp = httpx.Response(200, json=body)
     client = MCPClient(transport=_StaticTransport(resp))
-    out = await client.call("memory_set", {"key": "x", "value": "y"})
+    out = await client.call("memory_set", {"key": "x", "value": "y"}, project_id="proj-1")
     assert out == {}
 
 
@@ -113,9 +115,53 @@ async def test_call_connection_error_raises_mcp_error():
     """httpx.RequestError (e.g. mcp-server down) → MCPError with status 502."""
     client = MCPClient(transport=_ErrorTransport())
     with pytest.raises(MCPError) as exc_info:
-        await client.call("web_search", {"query": "project = A"})
+        await client.call("web_search", {"query": "project = A"}, project_id="proj-1")
     assert exc_info.value.status_code == 502
     assert "unreachable" in str(exc_info.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Toolbox logging
+# ---------------------------------------------------------------------------
+
+async def test_call_success_logs_to_toolbox(tmp_path):
+    toolbox = ToolboxStore(str(tmp_path / "test.db"))
+    await toolbox.init()
+    client = MCPClient(
+        transport=_StaticTransport(_ok_response({"results": [1, 2]})),
+        toolbox=toolbox,
+    )
+    await client.call("web_search", {"query": "x"}, project_id="proj-1")
+
+    rows = await toolbox.list_by_project("proj-1")
+    assert len(rows) == 1
+    assert rows[0].tool_name == "web_search"
+    assert rows[0].success is True
+    assert rows[0].error is None
+    assert rows[0].result_summary is not None
+    assert rows[0].duration_ms is not None
+
+
+async def test_call_failure_logs_to_toolbox(tmp_path):
+    toolbox = ToolboxStore(str(tmp_path / "test.db"))
+    await toolbox.init()
+    client = MCPClient(transport=_ErrorTransport(), toolbox=toolbox)
+
+    with pytest.raises(MCPError):
+        await client.call("web_search", {"query": "x"}, project_id="proj-1")
+
+    rows = await toolbox.list_by_project("proj-1")
+    assert len(rows) == 1
+    assert rows[0].success is False
+    assert rows[0].error is not None
+    assert rows[0].result_summary is None
+
+
+async def test_call_without_toolbox_does_not_raise():
+    """MCPClient stays usable with no toolbox configured (the default)."""
+    client = MCPClient(transport=_StaticTransport(_ok_response({"ok": True})))
+    out = await client.call("web_search", {"query": "x"}, project_id="proj-1")
+    assert out == {"ok": True}
 
 
 pytestmark = pytest.mark.asyncio

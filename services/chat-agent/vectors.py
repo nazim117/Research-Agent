@@ -42,12 +42,12 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    FilterSelector,
     MatchAny,
     MatchValue,
     PayloadSchemaType,
     PointStruct,
     VectorParams,
-    FilterSelector,
 )
 
 from config import settings

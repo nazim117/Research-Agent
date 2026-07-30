@@ -4,18 +4,18 @@
 # idempotency (re-posting same source replaces instead of duplicates).
 
 import json
-import pytest
+import os
+import sys
 from unittest.mock import AsyncMock
 
-import sys
-import os
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from transcript import (
-    extract_structured,
-    _parse_extraction_json,
     TranscriptStore,
+    _parse_extraction_json,
+    extract_structured,
 )
 
 

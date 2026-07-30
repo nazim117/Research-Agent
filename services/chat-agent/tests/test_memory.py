@@ -18,8 +18,8 @@
 #   needing the decorator explicitly, but we add it explicitly here for clarity.
 
 import pytest
-from memory import ConversationStore
 
+from memory import ConversationStore
 
 # ---------------------------------------------------------------------------
 # Helpers

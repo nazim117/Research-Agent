@@ -9,7 +9,6 @@ import pytest
 from memory import ConversationStore
 from projects import SCHEMA_VERSION, ProjectStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

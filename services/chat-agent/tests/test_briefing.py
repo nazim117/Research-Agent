@@ -3,21 +3,21 @@
 # Covers: BriefingStore.assemble_briefing logic, endpoint contract,
 # empty project handling, response time targets.
 
-import pytest
+import os
+import sys
 from unittest.mock import AsyncMock
 
-import sys
-import os
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from briefing import (
-    assemble_briefing,
-    _generate_summary,
-    Briefing,
     BriefAction,
     BriefDecision,
+    Briefing,
     BriefRisk,
+    _generate_summary,
+    assemble_briefing,
 )
 
 

@@ -8,8 +8,8 @@
 #   set_request_id("abc-123")  # called once per request by the middleware
 #   get_request_id()           # called anywhere in the same request to read it
 
-from contextvars import ContextVar
 import uuid
+from contextvars import ContextVar
 
 # Default is empty string so log records before the middleware runs don't crash.
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="")

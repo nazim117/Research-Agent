@@ -19,8 +19,8 @@ pytestmark = pytest.mark.integration
 
 async def test_chat_ollama_returns_string(ollama_chat_model_up, monkeypatch):
     """chat() (provider=ollama) returns a non-empty string reply."""
-    from config import settings
     import llm
+    from config import settings
 
     # Ensure we test the Ollama path regardless of the local .env setting.
     monkeypatch.setattr(settings, "llm_provider", "ollama")
@@ -34,8 +34,8 @@ async def test_chat_ollama_returns_string(ollama_chat_model_up, monkeypatch):
 
 async def test_chat_multi_turn(ollama_chat_model_up, monkeypatch):
     """chat() handles a two-turn conversation without raising."""
-    from config import settings
     import llm
+    from config import settings
 
     monkeypatch.setattr(settings, "llm_provider", "ollama")
 

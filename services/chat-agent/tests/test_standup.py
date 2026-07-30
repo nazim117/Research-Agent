@@ -4,17 +4,16 @@
 # no real DB or LLM is required.  Covers window filtering, bucket
 # assignment, action sorting, empty-project handling, and LLM failure.
 
-import pytest
+import os
+import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
-import sys
-import os
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from standup import assemble_standup, _within_window, _sort_open_actions, Standup
-
+from standup import Standup, _sort_open_actions, _within_window, assemble_standup
 
 # ---------------------------------------------------------------------------
 # Helpers — shared test fixtures

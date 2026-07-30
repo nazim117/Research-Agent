@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 
@@ -33,13 +33,12 @@ async def stream_pull(settings, model_name: str) -> AsyncIterator[bytes]:
     stream line like {"error": "..."} rather than an HTTP error — the caller
     (dashboard's pullModel) checks for that field on each parsed line.
     """
-    async with httpx.AsyncClient(timeout=None) as client:
-        async with client.stream(
-            "POST",
-            f"{settings.ollama_base_url}/api/pull",
-            json={"name": model_name},
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if line:
-                    yield (line + "\n").encode("utf-8")
+    async with httpx.AsyncClient(timeout=None) as client, client.stream(
+        "POST",
+        f"{settings.ollama_base_url}/api/pull",
+        json={"name": model_name},
+    ) as resp:
+        resp.raise_for_status()
+        async for line in resp.aiter_lines():
+            if line:
+                yield (line + "\n").encode("utf-8")

@@ -29,12 +29,12 @@ async def test_memory_set_and_get(mcp):
     value = "integration_test_value"
 
     # Store a value.
-    set_result = await mcp.call("memory_set", {"key": key, "value": value})
+    set_result = await mcp.call("memory_set", {"key": key, "value": value}, project_id="test")
     # mcp-server returns {} or a confirmation dict — just assert no error raised.
     assert isinstance(set_result, dict)
 
     # Retrieve the value.
-    get_result = await mcp.call("memory_get", {"key": key})
+    get_result = await mcp.call("memory_get", {"key": key}, project_id="test")
     assert isinstance(get_result, dict)
     # The result should contain the value we stored.
     assert get_result.get("value") == value or value in str(get_result)
@@ -44,10 +44,10 @@ async def test_memory_set_overwrites(mcp):
     """Calling memory_set twice with the same key stores the latest value."""
     key = "integration_test_overwrite"
 
-    await mcp.call("memory_set", {"key": key, "value": "first"})
-    await mcp.call("memory_set", {"key": key, "value": "second"})
+    await mcp.call("memory_set", {"key": key, "value": "first"}, project_id="test")
+    await mcp.call("memory_set", {"key": key, "value": "second"}, project_id="test")
 
-    result = await mcp.call("memory_get", {"key": key})
+    result = await mcp.call("memory_get", {"key": key}, project_id="test")
     assert "second" in str(result)
 
 
@@ -56,6 +56,7 @@ async def test_memory_set_overwrites(mcp):
 async def test_mcp_server_health(mcp_up):
     """GET /health returns 200 and {"status":"healthy"}."""
     import httpx
+
     from config import settings
 
     async with httpx.AsyncClient() as client:

@@ -17,9 +17,10 @@
 #   today won't appear in the Done bucket.  Acceptable for the daily standup.
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 logger = logging.getLogger("uvicorn.error")
 

@@ -15,7 +15,6 @@ from fastapi import HTTPException
 
 from config import settings
 
-
 # ─── Backend implementations ──────────────────────────────────────────────────
 
 async def _chat_ollama(messages: list[dict]) -> tuple[str, dict]:

@@ -24,36 +24,46 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
-from pydantic import BaseModel, Field, field_validator
-
+import briefing
+import env_config
+import rag
+import standup
 from config import settings
 from document_state import DocumentStateStore
-from embeddings import embed, get_model_info as get_embeddings_model_info
-import env_config
+from embeddings import embed
+from embeddings import get_model_info as get_embeddings_model_info
+from extractors import extract_file, extract_url
+from flashcards import FlashcardStore, generate_candidates, schedule_review
 from health import check_detailed_health
-from mcp_client import MCPClient, MCPError
 from llm import chat, validate_llm_config
+from mcp_client import MCPClient, MCPError
 from memory import ConversationStore
 from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
-import rag
-from request_context import set_request_id, new_request_id
+from request_context import new_request_id, set_request_id
+from toolbox import ToolboxStore
 from transcript import (
     TranscriptStore,
     extract_structured,
 )
-from flashcards import FlashcardStore, generate_candidates, schedule_review
 from vectors import VectorStore
-import briefing
-import standup
-from extractors import extract_file, extract_url
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -63,6 +73,7 @@ vstore = VectorStore(url=settings.qdrant_url)
 transcript_store = TranscriptStore(settings.sqlite_path)
 document_state_store = DocumentStateStore(settings.sqlite_path)
 flashcard_store = FlashcardStore(settings.sqlite_path)
+toolbox_store = ToolboxStore(settings.sqlite_path)
 
 # Shared MCPClient — the gateway to mcp-server's tools (web search, etc.).
 # Credentials (e.g. BRAVE_SEARCH_API_KEY) live on the mcp-server; this
@@ -70,6 +81,7 @@ flashcard_store = FlashcardStore(settings.sqlite_path)
 _mcp = MCPClient(
     base_url=settings.mcp_base_url,
     timeout=settings.mcp_timeout_s,
+    toolbox=toolbox_store,
 )
 
 # nomic-embed-text always produces 768-dimensional vectors.
@@ -142,6 +154,7 @@ async def lifespan(app: FastAPI):
     await transcript_store.init()
     await document_state_store.init()
     await flashcard_store.init()
+    await toolbox_store.init()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -597,6 +610,7 @@ async def delete_project(project_id: str):
     await transcript_store.delete_by_project(project_id)
     await document_state_store.delete_by_project(project_id)
     await flashcard_store.delete_by_project(project_id)
+    await toolbox_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -1085,7 +1099,9 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     web_search_error: str | None = None
     if req.web_search:
         try:
-            web_response = await _mcp.call("web_search", {"query": req.message, "limit": 5})
+            web_response = await _mcp.call(
+                "web_search", {"query": req.message, "limit": 5}, project_id=req.project_id
+            )
             web_results = web_response.get("results", [])
         except MCPError as exc:
             # Degrade, don't fail the whole turn — the LLM can still answer

@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-**Research Agent** — a local-first AI assistant for project managers. It keeps
-project-scoped memory, ingests documents/transcripts, retrieves context with
-RAG, and syncs Jira/GitHub work items into a private per-project knowledge
-base. The repo name ("Cost-aware AI Agent execution engine") reflects an
-earlier project; that original execution-engine architecture (`gateway`,
-`policy-engine`, `agent-executor`) has been removed from the repo. The active
-system is the stack described below.
+**Research Agent** — a local-first AI research assistant. It keeps
+project-scoped memory, ingests documents/transcripts, and retrieves context
+with RAG in a private per-project knowledge base. The repo name ("Cost-aware
+AI Agent execution engine") reflects an earlier project; that original
+execution-engine architecture (`gateway`, `policy-engine`, `agent-executor`)
+has been removed from the repo. The active system is the stack described
+below.
 
 ## Active stack
 

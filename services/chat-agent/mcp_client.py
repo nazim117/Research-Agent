@@ -17,8 +17,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 
 import httpx
+
+from toolbox import ToolboxStore
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class MCPError(Exception):
@@ -43,6 +49,9 @@ class MCPClient:
                    may be slower than usual).
         transport: Optional httpx transport override — inject a fake transport
                    in unit tests instead of hitting a real network.
+        toolbox:   Optional ToolboxStore — when set, every call() invocation
+                   is logged (see toolbox.py). Optional so MCPClient stays
+                   constructible/testable without a store.
     """
 
     def __init__(
@@ -50,17 +59,51 @@ class MCPClient:
         base_url: str = "http://localhost:8083",
         timeout: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
+        toolbox: ToolboxStore | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._transport = transport
+        self._toolbox = toolbox
 
-    async def call(self, name: str, arguments: dict) -> dict:
+    async def _log_call(
+        self,
+        project_id: str,
+        name: str,
+        arguments: dict,
+        success: bool,
+        result: dict | None = None,
+        error: str | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        """Best-effort toolbox log write. Never raises — a bug here must
+        never break a real tool call (same degrade-don't-fail philosophy as
+        the web_search_error handling in main.py).
+        """
+        if self._toolbox is None:
+            return
+        try:
+            result_summary = json.dumps(result)[:200] if result is not None else None
+            await self._toolbox.log(
+                project_id,
+                name,
+                arguments,
+                success=success,
+                result_summary=result_summary,
+                error=error,
+                duration_ms=duration_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 — logging must never propagate
+            logger.warning("toolbox log write failed: %s", exc)
+
+    async def call(self, name: str, arguments: dict, project_id: str) -> dict:
         """Invoke a named tool on the mcp-server and return the result as a dict.
 
         Args:
             name:       Tool name, e.g. "web_search".
             arguments:  Tool input as a plain dict (will be JSON-encoded).
+            project_id: Project this call is made on behalf of — every call
+                        is logged to the toolbox scoped by this id.
 
         Returns:
             Parsed result dict (the JSON object embedded in content[0].text).
@@ -69,6 +112,7 @@ class MCPClient:
             MCPError: Connection failure, non-2xx HTTP status, isError=true,
                       or non-JSON response text.
         """
+        start = time.monotonic()
         payload = {"name": name, "arguments": arguments}
         try:
             async with httpx.AsyncClient(
@@ -80,13 +124,17 @@ class MCPClient:
                     json=payload,
                 )
         except httpx.RequestError as exc:
-            raise MCPError(f"mcp-server unreachable: {exc}") from exc
+            error = MCPError(f"mcp-server unreachable: {exc}")
+            await self._log_call(project_id, name, arguments, success=False, error=str(error))
+            raise error from exc
 
         if resp.status_code not in (200, 201):
-            raise MCPError(
+            error = MCPError(
                 f"mcp-server returned HTTP {resp.status_code}: {resp.text[:200]}",
                 status_code=resp.status_code,
             )
+            await self._log_call(project_id, name, arguments, success=False, error=str(error))
+            raise error
 
         data = resp.json()
 
@@ -96,17 +144,31 @@ class MCPClient:
             # on the Go side).
             content = data.get("content") or []
             text = content[0].get("text", "") if content else ""
-            raise MCPError(f"tool {name!r} error: {text}")
+            error = MCPError(f"tool {name!r} error: {text}")
+            await self._log_call(project_id, name, arguments, success=False, error=str(error))
+            raise error
 
         content = data.get("content") or []
         if not content:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            await self._log_call(
+                project_id, name, arguments, success=True, result={}, duration_ms=duration_ms
+            )
             return {}
 
         raw_text = content[0].get("text", "{}")
         try:
-            return json.loads(raw_text)
+            result = json.loads(raw_text)
         except json.JSONDecodeError as exc:
-            raise MCPError(f"tool {name!r} returned non-JSON text: {raw_text[:200]}") from exc
+            error = MCPError(f"tool {name!r} returned non-JSON text: {raw_text[:200]}")
+            await self._log_call(project_id, name, arguments, success=False, error=str(error))
+            raise error from exc
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        await self._log_call(
+            project_id, name, arguments, success=True, result=result, duration_ms=duration_ms
+        )
+        return result
 
     async def _get(self, path: str) -> dict:
         """Shared GET helper for mcp-server's plain HTTP endpoints (not the

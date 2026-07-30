@@ -1,9 +1,8 @@
 # Research Agent - Local-first AI Project Memory Assistant
 
-Research Agent is a local-first AI assistant for project managers and knowledge
-workers. It keeps project-scoped memory, ingests documents and meeting
-transcripts, and retrieves relevant context with RAG in a private project
-knowledge base.
+Research Agent is a local-first AI research assistant. It keeps project-scoped
+memory, ingests documents and transcripts, and retrieves relevant context with
+RAG in a private project knowledge base.
 
 The current active architecture is centered on the FastAPI `chat-agent`
 service, backed by the Go `mcp-server` for web search and other outbound

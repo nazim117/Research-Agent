@@ -19,9 +19,9 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable
 
 import aiosqlite
 
@@ -224,25 +224,23 @@ class FlashcardStore:
         return created
 
     async def list_by_project(self, project_id: str) -> list[Flashcard]:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT id, project_id, source, front, back, ease_factor, "
-                "interval_days, repetitions, due_at, last_reviewed_at, created_at "
-                "FROM flashcards WHERE project_id = ? ORDER BY due_at ASC",
-                (project_id,),
-            ) as cur:
-                rows = await cur.fetchall()
+        async with aiosqlite.connect(self.db_path) as db, db.execute(
+            "SELECT id, project_id, source, front, back, ease_factor, "
+            "interval_days, repetitions, due_at, last_reviewed_at, created_at "
+            "FROM flashcards WHERE project_id = ? ORDER BY due_at ASC",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
         return [Flashcard(*r) for r in rows]
 
     async def get(self, card_id: str) -> Flashcard | None:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT id, project_id, source, front, back, ease_factor, "
-                "interval_days, repetitions, due_at, last_reviewed_at, created_at "
-                "FROM flashcards WHERE id = ?",
-                (card_id,),
-            ) as cur:
-                row = await cur.fetchone()
+        async with aiosqlite.connect(self.db_path) as db, db.execute(
+            "SELECT id, project_id, source, front, back, ease_factor, "
+            "interval_days, repetitions, due_at, last_reviewed_at, created_at "
+            "FROM flashcards WHERE id = ?",
+            (card_id,),
+        ) as cur:
+            row = await cur.fetchone()
         return Flashcard(*row) if row else None
 
     async def update_review(self, card_id: str, fields: dict) -> None:

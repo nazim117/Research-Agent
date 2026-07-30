@@ -31,9 +31,9 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Awaitable, Callable
 
 import aiosqlite
 
@@ -297,13 +297,12 @@ class TranscriptStore:
 
     # -- read helpers ----------------------------------------------------------
     async def list_decisions(self, project_id: str) -> list[Decision]:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT id, project_id, source, text, created_at FROM decisions "
-                "WHERE project_id = ? ORDER BY created_at DESC",
-                (project_id,),
-            ) as cur:
-                rows = await cur.fetchall()
+        async with aiosqlite.connect(self.db_path) as db, db.execute(
+            "SELECT id, project_id, source, text, created_at FROM decisions "
+            "WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
         return [Decision(*r) for r in rows]
 
     async def list_action_items(
@@ -324,11 +323,10 @@ class TranscriptStore:
         return [ActionItem(*r) for r in rows]
 
     async def list_risks(self, project_id: str) -> list[Risk]:
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                "SELECT id, project_id, source, text, created_at FROM risks "
-                "WHERE project_id = ? ORDER BY created_at DESC",
-                (project_id,),
-            ) as cur:
-                rows = await cur.fetchall()
+        async with aiosqlite.connect(self.db_path) as db, db.execute(
+            "SELECT id, project_id, source, text, created_at FROM risks "
+            "WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ) as cur:
+            rows = await cur.fetchall()
         return [Risk(*r) for r in rows]

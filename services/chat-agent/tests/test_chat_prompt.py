@@ -20,9 +20,10 @@
 #      not the old tentative phrasing ("may be relevant").
 #   4. Prior assistant refusals injected via recent history are stripped.
 
-import pytest
 from unittest.mock import AsyncMock, patch
-from httpx import AsyncClient, ASGITransport
+
+import pytest
+from httpx import ASGITransport, AsyncClient
 
 # We import the app *after* all patches are in place in each test, so use
 # a late import inside the fixtures instead of a module-level import.
@@ -418,7 +419,9 @@ async def test_web_search_on_injects_results_and_citations():
 
     assert resp.status_code == 200
     mcp.call.assert_awaited_once_with(
-        "web_search", {"query": "What's the latest release of Qdrant?", "limit": 5}
+        "web_search",
+        {"query": "What's the latest release of Qdrant?", "limit": 5},
+        project_id=FAKE_PROJECT_ID,
     )
 
     data = resp.json()

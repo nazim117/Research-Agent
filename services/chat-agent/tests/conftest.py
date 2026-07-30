@@ -87,6 +87,7 @@ def ollama_chat_model_up(ollama_up):
     `ollama pull <model>` to make these tests pass.
     """
     import httpx
+
     from config import settings
 
     try:

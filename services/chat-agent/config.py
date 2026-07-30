@@ -11,6 +11,7 @@
 #   - pass -e LLM_PROVIDER=ollama to docker run / docker compose
 
 from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # This file lives at services/chat-agent/config.py.
