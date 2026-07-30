@@ -5,7 +5,6 @@ const GROUPS = [
       { id: 'general', label: 'General' },
       { id: 'llm-models', label: 'LLM Models' },
       { id: 'embeddings', label: 'Embeddings' },
-      { id: 'integrations', label: 'Integrations' },
     ],
   },
   {

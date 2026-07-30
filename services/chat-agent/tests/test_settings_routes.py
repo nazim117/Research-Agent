@@ -1,9 +1,9 @@
 """HTTP-level tests for the Settings/Wizard support routes added to main.py:
 GET /health/detailed, GET /models, POST /models/pull, GET /config,
-GET /integrations/status, GET /config/env, PUT /config/env/{key}.
+GET /config/env, PUT /config/env/{key}.
 
-Follows test_actions_api.py's pattern: AsyncClient + ASGITransport against
-the real app, with singletons monkeypatched so no real network is used.
+Uses AsyncClient + ASGITransport against the real app, with singletons
+monkeypatched so no real network is used.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -114,33 +114,9 @@ async def test_models_lists_installed_models():
 
 
 @pytest.mark.asyncio
-async def test_integrations_status_proxies_mcp_server():
-    fake_status = {"jira": {"configured": True, "base_url": "https://example.atlassian.net"}, "github": {"configured": False}}
-    with patch("main._mcp") as mcp:
-        mcp.get_integrations_status = AsyncMock(return_value=fake_status)
-        from main import app
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/integrations/status")
-
-    assert resp.status_code == 200
-    assert resp.json() == fake_status
-
-
-@pytest.mark.asyncio
-async def test_integrations_status_maps_mcp_error_to_http_status():
-    with patch("main._mcp") as mcp:
-        mcp.get_integrations_status = AsyncMock(side_effect=MCPError("mcp-server unreachable", status_code=502))
-        from main import app
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.get("/integrations/status")
-
-    assert resp.status_code == 502
-
-
-@pytest.mark.asyncio
 async def test_get_config_env_merges_local_and_remote_vars():
     local_vars = [{"key": "LLM_PROVIDER", "secret": False, "configured": True, "hint": "ollama"}]
-    remote_vars = [{"key": "GITHUB_TOKEN", "secret": True, "configured": True, "hint": "…1234"}]
+    remote_vars = [{"key": "BRAVE_SEARCH_API_KEY", "secret": True, "configured": True, "hint": "…1234"}]
     with (
         patch("main.env_config.list_env_vars", return_value=local_vars),
         patch("main._mcp") as mcp,
@@ -221,10 +197,10 @@ async def test_put_config_env_unowned_key_proxies_to_mcp_server():
         mcp.set_env_var = AsyncMock()
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            resp = await client.put("/config/env/GITHUB_TOKEN", json={"value": "ghp_new"})
+            resp = await client.put("/config/env/BRAVE_SEARCH_API_KEY", json={"value": "new-key"})
 
     assert resp.status_code == 200
-    mcp.set_env_var.assert_called_once_with("GITHUB_TOKEN", "ghp_new")
+    mcp.set_env_var.assert_called_once_with("BRAVE_SEARCH_API_KEY", "new-key")
     set_var.assert_not_called()
 
 

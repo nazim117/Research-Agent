@@ -168,10 +168,10 @@ async def retrieve_by_source(
     source: str,
     vstore: VectorStore,
 ) -> list[Chunk]:
-    """Return all stored chunks for an exact source label (e.g. 'jira:KAN-8').
+    """Return all stored chunks for an exact source label (e.g. 'notes.md').
 
-    Used when the user explicitly references a ticket key so the LLM always
-    gets that ticket's content regardless of semantic similarity.
+    Useful when a caller wants a specific document's content regardless of
+    semantic similarity, rather than going through embed-and-search.
     """
     hits = await vstore.fetch_by_source(
         collection=settings.qdrant_docs_collection,

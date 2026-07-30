@@ -89,22 +89,12 @@ class Settings(BaseSettings):
     memory_score_threshold: float = 0.5
 
     # MCP server — internal tool gateway.
-    # The mcp-server (services/mcp-server, port 8083) proxies all PM vendor
-    # API calls.  It holds JIRA_* and GITHUB_TOKEN; the chat-agent never reads
-    # those credentials directly.  Inside Docker Compose the service name
-    # "mcp-server" resolves to the container; override with MCP_BASE_URL.
+    # The mcp-server (services/mcp-server, port 8083) proxies web search and
+    # other outbound tool calls; the chat-agent never talks to those vendor
+    # APIs directly.  Inside Docker Compose the service name "mcp-server"
+    # resolves to the container; override with MCP_BASE_URL.
     mcp_base_url: str = "http://localhost:8083"
     mcp_timeout_s: float = 30.0
-
-    # Jira Cloud / GitHub credentials.
-    # NOTE: these fields are NO LONGER read by the chat-agent.  They are kept
-    # here only so that any .env file that sets JIRA_* or GITHUB_TOKEN does not
-    # cause a pydantic-settings "extra field" error.  The values are ignored
-    # at runtime — set them on the mcp-server service instead.
-    jira_base_url: str = ""
-    jira_email: str = ""
-    jira_api_token: str = ""
-    github_token: str = ""
 
     # Check the repo-root .env first, then a local .env next to this file.
     # pydantic-settings reads them left-to-right; later files override earlier ones.

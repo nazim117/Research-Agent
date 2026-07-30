@@ -8,24 +8,22 @@
 #     - You cannot delete one workstream without wiping everything.
 #     - The agent cannot tell you what's happening in one project vs another.
 #
-#   A "project" here is a small container: a display name, a stable id, and
-#   a bag of external references (Jira project key, GitHub repo, ...).  Every
-#   message, vector, and ingested document is tagged with the project's id
-#   so searches stay scoped.
+#   A "project" here is a small container: a display name and a stable id.
+#   Every message, vector, and ingested document is tagged with the
+#   project's id so searches stay scoped.
 #
 # Why a schema_version table?
 #   for project_id, which would break every query.  Recording the schema
 #   version lets startup code detect the mismatch and wipe-and-recreate.
 #   (Per owner decision: we wipe existing data rather than migrate.)
 
-import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import aiosqlite
 
 # Bump this whenever the SQL schema changes in an incompatible way.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -34,8 +32,6 @@ class Project:
     id: str
     name: str
     created_at: str
-    # Example: {"jira_project_key": "ALPHA", "github_repo": "org/repo"}.
-    external_refs: dict = field(default_factory=dict)
 
 
 class ProjectStore:
@@ -61,8 +57,7 @@ class ProjectStore:
                 CREATE TABLE IF NOT EXISTS projects (
                     id            TEXT PRIMARY KEY,
                     name          TEXT NOT NULL,
-                    created_at    TEXT DEFAULT (datetime('now')),
-                    external_refs TEXT NOT NULL DEFAULT '{}'
+                    created_at    TEXT DEFAULT (datetime('now'))
                 )
                 """
             )
@@ -95,7 +90,7 @@ class ProjectStore:
         """Return a project whose name matches exactly (case-insensitive), or None."""
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
-                "SELECT id, name, created_at, external_refs FROM projects WHERE LOWER(name) = LOWER(?)",
+                "SELECT id, name, created_at FROM projects WHERE LOWER(name) = LOWER(?)",
                 (name,),
             )
             row = await cursor.fetchone()
@@ -105,10 +100,9 @@ class ProjectStore:
             id=row[0],
             name=row[1],
             created_at=row[2],
-            external_refs=json.loads(row[3] or "{}"),
         )
 
-    async def create(self, name: str, external_refs: dict | None = None) -> Project:
+    async def create(self, name: str) -> Project:
         """Insert a new project and return it.
 
         The id is a random UUID — stable, unique across machines, and safe to
@@ -118,11 +112,10 @@ class ProjectStore:
         if await self.get_by_name(name) is not None:
             raise ValueError(f"A project named {name!r} already exists.")
         project_id = str(uuid.uuid4())
-        refs = external_refs or {}
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
-                "INSERT INTO projects (id, name, external_refs) VALUES (?, ?, ?)",
-                (project_id, name, json.dumps(refs)),
+                "INSERT INTO projects (id, name) VALUES (?, ?)",
+                (project_id, name),
             )
             await db.commit()
             # Fetch the server-assigned created_at so the returned object
@@ -136,7 +129,6 @@ class ProjectStore:
             id=project_id,
             name=name,
             created_at=row[0] if row else "",
-            external_refs=refs,
         )
 
     async def list(self) -> list[Project]:
@@ -148,7 +140,7 @@ class ProjectStore:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
-                SELECT id, name, created_at, external_refs
+                SELECT id, name, created_at
                 FROM projects
                 ORDER BY created_at DESC
                 """
@@ -160,7 +152,6 @@ class ProjectStore:
                 id=row[0],
                 name=row[1],
                 created_at=row[2],
-                external_refs=json.loads(row[3] or "{}"),
             )
             for row in rows
         ]
@@ -174,7 +165,7 @@ class ProjectStore:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
-                SELECT id, name, created_at, external_refs
+                SELECT id, name, created_at
                 FROM projects
                 WHERE id = ?
                 """,
@@ -188,16 +179,14 @@ class ProjectStore:
             id=row[0],
             name=row[1],
             created_at=row[2],
-            external_refs=json.loads(row[3] or "{}"),
         )
 
     async def update(
         self,
         project_id: str,
         name: str | None = None,
-        external_refs: dict | None = None,
     ) -> Project | None:
-        """Update a project's name and/or external_refs.
+        """Update a project's name.
 
         Returns the updated project, or None if the id does not exist.
         Unset kwargs are left untouched — this is a partial update, not a
@@ -208,7 +197,6 @@ class ProjectStore:
             return None
 
         new_name = name if name is not None else existing.name
-        new_refs = external_refs if external_refs is not None else existing.external_refs
 
         # Only check for duplicate names when the name is actually changing.
         if new_name.lower() != existing.name.lower():
@@ -220,10 +208,10 @@ class ProjectStore:
             await db.execute(
                 """
                 UPDATE projects
-                SET name = ?, external_refs = ?
+                SET name = ?
                 WHERE id = ?
                 """,
-                (new_name, json.dumps(new_refs), project_id),
+                (new_name, project_id),
             )
             await db.commit()
 
@@ -231,7 +219,6 @@ class ProjectStore:
             id=project_id,
             name=new_name,
             created_at=existing.created_at,
-            external_refs=new_refs,
         )
 
     async def delete(self, project_id: str) -> bool:

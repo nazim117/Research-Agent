@@ -70,15 +70,15 @@ def _error_response(message: str) -> httpx.Response:
 async def test_call_success_returns_parsed_dict(result):
     """Successful response → call() returns the parsed result dict."""
     client = MCPClient(transport=_StaticTransport(_ok_response(result)))
-    out = await client.call("jira_search_issues", {"query": "project = A"})
+    out = await client.call("web_search", {"query": "project = A"})
     assert out == result
 
 
 async def test_call_is_error_raises_mcp_error():
     """isError=true in the response body → MCPError raised with tool name in message."""
-    client = MCPClient(transport=_StaticTransport(_error_response("jira is not configured")))
-    with pytest.raises(MCPError, match="jira is not configured"):
-        await client.call("jira_search_issues", {"query": "project = A"})
+    client = MCPClient(transport=_StaticTransport(_error_response("tool is not configured")))
+    with pytest.raises(MCPError, match="tool is not configured"):
+        await client.call("web_search", {"query": "project = A"})
 
 
 @pytest.mark.parametrize("status_code", [400, 401, 500, 503])
@@ -87,7 +87,7 @@ async def test_call_non_2xx_raises_mcp_error(status_code):
     resp = httpx.Response(status_code, text="error body")
     client = MCPClient(transport=_StaticTransport(resp))
     with pytest.raises(MCPError) as exc_info:
-        await client.call("jira_get_issue", {"key": "A-1"})
+        await client.call("web_fetch", {"key": "A-1"})
     assert exc_info.value.status_code == status_code
 
 
@@ -97,7 +97,7 @@ async def test_call_non_json_text_raises_mcp_error():
     resp = httpx.Response(200, json=body)
     client = MCPClient(transport=_StaticTransport(resp))
     with pytest.raises(MCPError, match="non-JSON"):
-        await client.call("jira_get_issue", {"key": "A-1"})
+        await client.call("web_fetch", {"key": "A-1"})
 
 
 async def test_call_empty_content_returns_empty_dict():
@@ -113,7 +113,7 @@ async def test_call_connection_error_raises_mcp_error():
     """httpx.RequestError (e.g. mcp-server down) → MCPError with status 502."""
     client = MCPClient(transport=_ErrorTransport())
     with pytest.raises(MCPError) as exc_info:
-        await client.call("jira_search_issues", {"query": "project = A"})
+        await client.call("web_search", {"query": "project = A"})
     assert exc_info.value.status_code == 502
     assert "unreachable" in str(exc_info.value).lower()
 

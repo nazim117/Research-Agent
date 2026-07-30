@@ -39,9 +39,9 @@ test.describe('chat flow', () => {
   });
 
   test('reply with citations shows sources panel', async ({ page }) => {
-    // Default mock returns one citation: jira:KAN-1
+    // Default mock returns one citation: source:DOC-1
     const input = page.getByTestId('chat-input');
-    await input.fill('What did we decide about KAN-1?');
+    await input.fill('What did we decide?');
     await input.press('Enter');
 
     // Citations panel should be present.
@@ -52,7 +52,7 @@ test.describe('chat flow', () => {
     // Expand the panel.
     await citations.click();
     const item = page.getByTestId('citation-item').last();
-    await expect(item).toContainText('[1] jira:KAN-1');
+    await expect(item).toContainText('[1] source:DOC-1');
     await expect(item).toContainText('chunk 0');
   });
 

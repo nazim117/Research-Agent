@@ -4,7 +4,7 @@
 #   GET  /tools          — list available tool definitions
 #   POST /tools/call     — invoke a tool by name, get back a result
 #
-# The mcp-server holds all vendor credentials (JIRA_*, GITHUB_TOKEN).
+# The mcp-server holds all vendor credentials (e.g. BRAVE_SEARCH_API_KEY).
 # This client never reads or stores those values.
 #
 # Protocol: JSON over HTTP.
@@ -39,8 +39,8 @@ class MCPClient:
 
     Args:
         base_url:  Base URL of the mcp-server, e.g. "http://localhost:8083".
-        timeout:   Request timeout in seconds (default 30 s; tool calls that
-                   hydrate many Jira issues may be slower than usual).
+        timeout:   Request timeout in seconds (default 30 s; some tool calls
+                   may be slower than usual).
         transport: Optional httpx transport override — inject a fake transport
                    in unit tests instead of hitting a real network.
     """
@@ -59,7 +59,7 @@ class MCPClient:
         """Invoke a named tool on the mcp-server and return the result as a dict.
 
         Args:
-            name:       Tool name, e.g. "jira_search_issues".
+            name:       Tool name, e.g. "web_search".
             arguments:  Tool input as a plain dict (will be JSON-encoded).
 
         Returns:
@@ -91,8 +91,9 @@ class MCPClient:
         data = resp.json()
 
         if data.get("isError"):
-            # mcp-server sets isError=true when a tool call fails (e.g. Jira
-            # returns 401, or required env vars are missing on the Go side).
+            # mcp-server sets isError=true when a tool call fails (e.g. a
+            # vendor API returns an error, or required env vars are missing
+            # on the Go side).
             content = data.get("content") or []
             text = content[0].get("text", "") if content else ""
             raise MCPError(f"tool {name!r} error: {text}")
@@ -140,14 +141,6 @@ class MCPClient:
         health = await self._get("/health")
         return health.get("web_search", {})
 
-    async def get_integrations_status(self) -> dict:
-        """Fetch Jira/GitHub configured status from mcp-server.
-
-        Never includes secrets — mcp-server's /integrations/status endpoint
-        only reports configured booleans and the non-secret Jira base URL.
-        """
-        return await self._get("/integrations/status")
-
     async def _put(self, path: str, json_body: dict) -> dict:
         """Shared PUT helper, mirrors _get."""
         try:
@@ -167,15 +160,15 @@ class MCPClient:
         return resp.json()
 
     async def get_env_vars(self) -> list[dict]:
-        """Fetch mcp-server's own Jira/GitHub/web-search env var state.
+        """Fetch mcp-server's own web-search env var state.
 
         Never includes secrets in full — see mcp-server's Registry.EnvVars.
         """
         return await self._get("/config/env")
 
     async def set_env_var(self, key: str, value: str) -> None:
-        """Write one Jira/GitHub/web-search env var. The value is forwarded
-        as-is to mcp-server and never persisted or logged by this service —
+        """Write one web-search env var. The value is forwarded as-is to
+        mcp-server and never persisted or logged by this service —
         mcp-server is the only process that owns these credentials.
         """
         await self._put("/config/env", {"key": key, "value": value})

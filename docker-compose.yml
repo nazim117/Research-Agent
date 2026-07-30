@@ -5,8 +5,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8083:8083"
-    # Load PM credentials from the repo-root .env so the chat-agent never
-    # reads them directly.  JIRA_* and GITHUB_TOKEN stay on this service.
+    # Load vendor credentials (e.g. BRAVE_SEARCH_API_KEY) from the repo-root
+    # .env so the chat-agent never reads them directly.
     # required: false — a fresh clone has no .env yet (only .env.example),
     # and everything here has a working default without it; don't hard-fail
     # docker compose up over a file that's genuinely optional.

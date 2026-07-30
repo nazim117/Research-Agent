@@ -187,7 +187,7 @@ func main() {
 	// POST /tools/call — invoke a tool by name.
 	//
 	// A child span "tool.<name>" is started here so that Jaeger shows the exact
-	// tool name (e.g. "tool.jira_search_issues") rather than a generic "POST".
+	// tool name (e.g. "tool.web_search") rather than a generic "POST".
 	// The span is a child of the incoming traceparent injected by chat-agent's
 	// httpx auto-instrumentation — linking this execution to the /chat trace.
 	mux.HandleFunc("/tools/call", func(w http.ResponseWriter, r *http.Request) {
@@ -247,18 +247,7 @@ func main() {
 		})
 	})
 
-	// GET /integrations/status — Jira/GitHub configured state for the dashboard.
-	// Never returns secrets (email, API token) — see tools.Registry.IntegrationsStatus.
-	mux.HandleFunc("/integrations/status", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(registry.IntegrationsStatus())
-	})
-
-	// GET /config/env — Jira/GitHub/web-search env var state for the dashboard's
+	// GET /config/env — web-search env var state for the dashboard's
 	// Advanced settings tab. Secrets are never returned in full — see
 	// tools.Registry.EnvVars. Gated by checkOrigin since it reveals whether
 	// credentials are configured (and a masked hint), not just a boolean.

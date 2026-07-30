@@ -6,7 +6,7 @@
 //   an LLM — spinning all of that up for every UI test is slow and fragile.
 //   Instead, Playwright's page.route() intercepts every /api/** request in
 //   the browser and returns canned JSON.  This tests the UI logic (state
-//   management, rendering, citation display, toast wiring, action approvals)
+//   management, rendering, citation display, toast wiring)
 //   without the backend running.
 //
 // Usage in a spec:
@@ -22,12 +22,12 @@
 // ─── Shared test fixtures ─────────────────────────────────────────────────────
 
 export const FIXTURES = {
-  project: { id: 'proj-1', name: 'Test Project', external_refs: {}, created_at: '2026-01-01T00:00:00' },
-  project2: { id: 'proj-2', name: 'Another Project', external_refs: {}, created_at: '2026-01-02T00:00:00' },
+  project: { id: 'proj-1', name: 'Test Project', created_at: '2026-01-01T00:00:00' },
+  project2: { id: 'proj-2', name: 'Another Project', created_at: '2026-01-02T00:00:00' },
 
   chatReply: {
     reply: 'Based on the documentation, the answer is yes.',
-    citations: [{ ref: 1, source: 'jira:KAN-1', chunk_index: 0 }],
+    citations: [{ ref: 1, source: 'source:DOC-1', chunk_index: 0 }],
     session_id: 'default',
   },
 
@@ -40,16 +40,6 @@ export const FIXTURES = {
   sources: [{ source: 'https://example.com/doc', chunks: 4 }],
 
   ingestUrl: { chunks: 4, source: 'https://example.com/doc' },
-
-  action: {
-    id: 'act-1',
-    action_type: 'jira:add_comment',
-    status: 'pending',
-    payload: { item_id: 'KAN-1', body: 'Deploy to staging?', ref_key: 'jira_project_key' },
-    created_at: '2026-01-01T00:00:00',
-  },
-
-  approveResult: { id: 'act-1', status: 'executed', result: { url: 'https://jira.example.com/browse/KAN-1?focusedCommentId=1' } },
 
   briefing: {
     summary: 'Project is on track.',
@@ -75,7 +65,7 @@ export const FIXTURES = {
  *
  * @param {import('@playwright/test').Page} page
  * @param {Object} overrides  Per-endpoint response overrides keyed by name:
- *   { projects, chat, sources, ingestUrl, actions, approveAction, rejectAction,
+ *   { projects, chat, sources, ingestUrl,
  *     decisions, risks, briefing, standup }
  *   Each value replaces the entire default response body for that endpoint.
  */
@@ -133,20 +123,6 @@ export async function mockApi(page, overrides = {}) {
       return respond(overrides.ingest ?? FIXTURES.ingestUrl);
     }
 
-    // ── Actions ──────────────────────────────────────────────────────────────
-    if (method === 'GET' && /\/actions$/.test(path)) {
-      return respond(overrides.actions ?? [FIXTURES.action]);
-    }
-    if (method === 'POST' && /\/actions$/.test(path)) {
-      return respond(overrides.proposeAction ?? FIXTURES.action);
-    }
-    if (method === 'POST' && /\/actions\/[^/]+\/approve$/.test(path)) {
-      return respond(overrides.approveAction ?? FIXTURES.approveResult);
-    }
-    if (method === 'POST' && /\/actions\/[^/]+\/reject$/.test(path)) {
-      return respond(overrides.rejectAction ?? { id: 'act-1', status: 'rejected' });
-    }
-
     // ── Studio data ───────────────────────────────────────────────────────────
     if (method === 'GET' && /\/decisions$/.test(path)) {
       return respond(overrides.decisions ?? []);
@@ -162,12 +138,6 @@ export async function mockApi(page, overrides = {}) {
     }
     if (method === 'GET' && /\/standup$/.test(path)) {
       return respond(overrides.standup ?? FIXTURES.standup);
-    }
-    if (method === 'GET' && /\/sync$/.test(path)) {
-      return respond(overrides.sync ?? []);
-    }
-    if (method === 'POST' && /\/sync$/.test(path)) {
-      return respond(overrides.syncPost ?? { synced: 0 });
     }
     if (method === 'GET' && path === '/memory/search') {
       return respond(overrides.memorySearch ?? { results: [] });

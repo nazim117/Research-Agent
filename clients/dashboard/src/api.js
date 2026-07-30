@@ -13,8 +13,7 @@ async function request(method, path, body) {
 }
 
 export const listProjects = () => request('GET', '/projects');
-export const createProject = (name, externalRefs = {}) =>
-  request('POST', '/projects', { name, external_refs: externalRefs });
+export const createProject = (name) => request('POST', '/projects', { name });
 export const patchProject = (id, patch) => request('PATCH', `/projects/${id}`, patch);
 export const deleteProject = (id) => request('DELETE', `/projects/${id}`);
 
@@ -29,15 +28,6 @@ export const getHistory = (projectId, sessionId = 'default') =>
 
 export const memorySearch = (projectId, q, k = 5) =>
   request('GET', `/memory/search?project_id=${encodeURIComponent(projectId)}&q=${encodeURIComponent(q)}&k=${k}`);
-
-export const syncProject = (id) => request('POST', `/projects/${id}/sync`);
-
-export const listActions = (projectId, status) => {
-  const qs = status ? `?status=${status}` : '';
-  return request('GET', `/projects/${projectId}/actions${qs}`);
-};
-export const approveAction = (actionId) => request('POST', `/actions/${actionId}/approve`);
-export const rejectAction = (actionId) => request('POST', `/actions/${actionId}/reject`);
 
 // Step 10: Transcript processing
 export const ingestTranscript = (projectId, source, text) =>
@@ -102,7 +92,7 @@ export const ingestUrl = (projectId, url, kind) =>
 
 // ─── Setup wizard / Settings — system health, models, config ────────────
 // Backed by real endpoints added to chat-agent (health.py, ollama_models.py,
-// GET /config) and mcp-server (GET /integrations/status).
+// GET /config).
 
 export const checkSystemHealth = () => request('GET', '/health/detailed');
 
@@ -170,8 +160,6 @@ export async function testEmbeddingsConnection() {
   const embeddings = health.embeddings;
   return { ok: embeddings.status === 'ok', message: embeddings.detail };
 }
-
-export const getIntegrationStatus = () => request('GET', '/integrations/status');
 
 // Env vars owned by chat-agent and mcp-server (proxied), merged into one
 // list. Secret values are never returned in full — only `configured` +

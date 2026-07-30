@@ -49,8 +49,8 @@ async def _check_embeddings(base_url: str) -> dict:
 
 
 async def _check_mcp_server(mcp_client) -> dict:
-    # Optional: mcp-server only brokers Jira/GitHub sync — chat, RAG, and
-    # memory all work without it.
+    # Optional: mcp-server only brokers web search and other outbound tool
+    # calls — chat, RAG, and memory all work without it.
     try:
         await mcp_client.get_health()
         return {"status": "ok", "detail": "reachable", "required": False}

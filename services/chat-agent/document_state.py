@@ -13,7 +13,7 @@ class DocumentStateStore:
     """Manages the document_state table.
 
     Lives in the same SQLite file as projects + messages, following the same
-    pattern as SyncStore (sync.py) and TranscriptStore.
+    pattern as TranscriptStore.
     """
 
     def __init__(self, db_path: str) -> None:

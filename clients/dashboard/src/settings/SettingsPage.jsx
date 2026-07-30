@@ -5,7 +5,6 @@ import SettingsRail from './SettingsRail.jsx';
 import GeneralTab from './tabs/GeneralTab.jsx';
 import LlmModelsTab from './tabs/LlmModelsTab.jsx';
 import EmbeddingsTab from './tabs/EmbeddingsTab.jsx';
-import IntegrationsTab from './tabs/IntegrationsTab.jsx';
 import AdvancedTab from './tabs/AdvancedTab.jsx';
 import MarketplaceTab from './tabs/MarketplaceTab.jsx';
 import '../wizard/wizard.css';
@@ -15,7 +14,6 @@ const TAB_TITLES = {
   general: 'General',
   'llm-models': 'LLM Models',
   embeddings: 'Embeddings',
-  integrations: 'Integrations',
   advanced: 'Advanced',
   marketplace: 'Marketplace',
 };
@@ -75,9 +73,6 @@ export default function SettingsPage({ onClose, projects, activeId, onSelectProj
             )}
             {activeTab === 'llm-models' && <LlmModelsTab />}
             {activeTab === 'embeddings' && <EmbeddingsTab />}
-            {activeTab === 'integrations' && (
-              <IntegrationsTab onGoToAdvanced={() => handleSelectTab('advanced')} />
-            )}
             {activeTab === 'advanced' && <AdvancedTab onDirtyChange={setHasUnsavedChanges} setToast={setToast} />}
             {activeTab === 'marketplace' && <MarketplaceTab />}
           </div>

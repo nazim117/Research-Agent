@@ -38,7 +38,7 @@ var (
 	)
 
 	// toolCallDurationSeconds records how long each tool call takes end-to-end.
-	// This captures the latency of the underlying vendor API (Jira, GitHub, etc.).
+	// This captures the latency of the underlying vendor API (e.g. web search).
 	// Use histogram_quantile(0.95, rate(mcp_server_tool_call_duration_seconds_bucket[5m]))
 	// in Grafana to track p95 latency per tool.
 	toolCallDurationSeconds = promauto.NewHistogramVec(
@@ -54,7 +54,7 @@ var (
 // RecordToolCall records a single tool invocation result.
 //
 // Call this immediately after registry.Call() returns, passing:
-//   - name:    the tool name (e.g. "jira_search_issues")
+//   - name:    the tool name (e.g. "web_search")
 //   - err:     nil on success, non-nil on failure
 //   - started: time.Now() captured just before the registry.Call() call
 func RecordToolCall(name string, err error, started time.Time) {

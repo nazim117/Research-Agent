@@ -80,7 +80,7 @@ export default function AdvancedTab({ onDirtyChange, setToast }) {
 
       {mcpError && (
         <div className="wizard-warning mt-8" data-testid="settings-advanced-mcp-error">
-          Couldn't reach mcp-server — Jira/GitHub/web-search settings are unavailable until
+          Couldn't reach mcp-server — web-search settings are unavailable until
           it's back: {mcpError}
         </div>
       )}

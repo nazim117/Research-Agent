@@ -2,14 +2,14 @@
 
 Research Agent is a local-first AI assistant for project managers and knowledge
 workers. It keeps project-scoped memory, ingests documents and meeting
-transcripts, retrieves relevant context with RAG, and can sync Jira/GitHub work
-items into a private project knowledge base.
+transcripts, and retrieves relevant context with RAG in a private project
+knowledge base.
 
 The current active architecture is centered on the FastAPI `chat-agent`
-service, backed by the Go `mcp-server` for all Jira/GitHub API calls. The
-original "cost-aware AI agent execution engine" that this repository started
-as (`agent-executor`, `policy-engine`, `gateway`) has been removed; it is not
-part of the active Research Agent runtime.
+service, backed by the Go `mcp-server` for web search and other outbound
+tool calls. The original "cost-aware AI agent execution engine" that this
+repository started as (`agent-executor`, `policy-engine`, `gateway`) has been
+removed; it is not part of the active Research Agent runtime.
 
 ## What It Does
 
@@ -24,8 +24,6 @@ part of the active Research Agent runtime.
   override) when explicitly turned on for a message
 - Ingests pasted text, files, URLs, webpages, and transcripts
 - Extracts decisions, action items, and risks from meeting transcripts
-- Syncs Jira issues and GitHub issues/PRs into project RAG memory
-- Lets the assistant draft Jira/GitHub comments for human approval
 - Provides a React dashboard (with a first-run Setup Wizard and a Settings
   page for all of the above) and a Chrome side-panel extension
 
@@ -45,8 +43,6 @@ flowchart LR
   ChatAgent --> Ollama["Ollama chat (optional, local)"]
   ChatAgent --> LLM["Cloud chat provider (optional)"]
   ChatAgent --> MCP["Go mcp-server :8083"]
-  MCP --> Jira["Jira Cloud"]
-  MCP --> GitHub["GitHub REST API"]
   MCP --> SearXNG["SearXNG web search :8085"]
   ChatAgent --> Web["YouTube/Wikipedia/URLs"]
 ```
@@ -59,13 +55,13 @@ natively for hot reload during development (see [Quick Start](#quick-start)):
 
 | Container | Path | Responsibility |
 |---|---|---|
-| chat-agent | `services/chat-agent/` | FastAPI backend for projects, chat, RAG, memory, sync, transcript processing, and action approval |
-| mcp-server | `services/mcp-server/` | Go service that holds Jira/GitHub credentials and proxies PM tool calls — chat-agent calls this, never the vendor APIs directly |
+| chat-agent | `services/chat-agent/` | FastAPI backend for projects, chat, RAG, memory, and transcript processing |
+| mcp-server | `services/mcp-server/` | Go service that holds vendor credentials (e.g. Brave Search) and proxies outbound tool calls — chat-agent calls this, never the vendor APIs directly |
 | qdrant | Docker image `qdrant/qdrant` | Vector database for conversation and document embeddings |
 | embeddings | Docker image `ghcr.io/huggingface/text-embeddings-inference` | Bundled, purpose-built embedding server (BAAI/bge-base-en-v1.5) — always used for RAG/memory, regardless of which chat provider is active |
 | searxng | Docker image `searxng/searxng` | Self-hosted web search backend for the agent's optional web-search toggle — no API key required |
 | dashboard | `clients/dashboard/` | React UI on port 5173 — `npm run dev` for hot reload, or the Docker Compose service |
-| extension | `clients/extension/` | Chrome side panel for chatting, ingesting current pages, syncing, and approving actions |
+| extension | `clients/extension/` | Chrome side panel for chatting and ingesting current pages |
 | ollama | host service (optional) | Only needed if you choose local chat in Settings > LLM Models — not used for embeddings |
 
 ### Repository Layout
@@ -83,17 +79,15 @@ services/
     llm.py                  Ollama/OpenAI-compatible chat client
     transcript.py           Transcript extraction and structured SQLite storage
     briefing.py             Project briefing assembler
-    sync.py                 Jira/GitHub sync orchestration
-    actions.py              Human approval action lifecycle
     extractors.py           File, audio, YouTube, Wikipedia, and generic URL extraction
-    mcp_client.py           HTTP client for the mcp-server tool-call API — Jira/GitHub calls go through here
+    mcp_client.py           HTTP client for the mcp-server tool-call API
     request_context.py      Per-request correlation id (contextvar)
     tests/                  pytest coverage for core backend behaviour
 
   mcp-server/
     cmd/server/main.go      Entry point
     internal/mcp/           Tool-call HTTP server (GET /tools, POST /tools/call)
-    internal/tools/         jira.go, github.go, web.go, files.go, memory.go — one file per tool integration
+    internal/tools/         web.go, files.go, memory.go, http.go — one file per tool integration
 
 clients/
   dashboard/
@@ -120,11 +114,9 @@ SQLite tables:
 
 | Table | Purpose |
 |---|---|
-| `projects` | Project records and external references such as Jira project key or GitHub repo |
+| `projects` | Project records (id, name, created_at) |
 | `schema_version` | Startup schema compatibility marker |
 | `messages` | Conversation history scoped by `project_id` and `session_id` |
-| `sync_state` | Last sync timestamp per project external reference |
-| `actions` | Sync audit rows and pending/approved/rejected/executed/failed write actions |
 | `decisions` | Decisions extracted from transcripts |
 | `action_items` | Action items extracted from transcripts |
 | `risks` | Risks extracted from transcripts |
@@ -160,8 +152,8 @@ sequenceDiagram
   API->>Q: Search document chunks by project_id
   API->>Q: Store user vector
   API->>L: Send prompt with RAG, memory, and history
-  L-->>API: Reply, optionally with DRAFT_ACTION
-  API->>SQL: Store assistant reply and optional pending action
+  L-->>API: Reply
+  API->>SQL: Store assistant reply
   API->>O: Embed assistant reply
   API->>Q: Store assistant vector
   API-->>UI: Reply and citations
@@ -205,28 +197,6 @@ sequenceDiagram
   API-->>UI: Chunk and extraction counts
 ```
 
-### Human Approval for External Writes
-
-```mermaid
-sequenceDiagram
-  participant User
-  participant UI as Dashboard/Extension
-  participant API as chat-agent
-  participant SQL as SQLite actions
-  participant PM as Jira/GitHub
-
-  User->>UI: Ask assistant to comment on an issue
-  UI->>API: POST /chat
-  API->>SQL: Create pending action from DRAFT_ACTION
-  UI->>API: GET /projects/{project_id}/actions?status=pending
-  User->>UI: Approve
-  UI->>API: POST /actions/{action_id}/approve
-  API->>PM: Add comment
-  PM-->>API: Comment id/url
-  API->>SQL: Mark action executed
-  API-->>UI: Result URL
-```
-
 ## API Overview
 
 The active API is served by `services/chat-agent/main.py`.
@@ -236,14 +206,8 @@ The active API is served by `services/chat-agent/main.py`.
 | GET | `/health` | Liveness check |
 | POST | `/projects` | Create a project |
 | GET | `/projects` | List projects |
-| PATCH | `/projects/{project_id}` | Update project name or external refs |
-| DELETE | `/projects/{project_id}` | Delete project and cascade memory/sources/actions |
-| POST | `/projects/{project_id}/sync` | Sync configured Jira/GitHub refs |
-| GET | `/projects/{project_id}/sync` | Show sync state |
-| POST | `/projects/{project_id}/actions` | Create a pending action |
-| GET | `/projects/{project_id}/actions` | List actions, optionally by status |
-| POST | `/actions/{action_id}/approve` | Execute an approved Jira/GitHub comment action |
-| POST | `/actions/{action_id}/reject` | Reject a pending action |
+| PATCH | `/projects/{project_id}` | Update project name |
+| DELETE | `/projects/{project_id}` | Delete project and cascade memory/sources |
 | POST | `/ingest` | Ingest plain text into RAG |
 | POST | `/ingest/transcript` | Ingest transcript and extract structured rows |
 | POST | `/ingest/file` | Upload `.txt`, `.md`, `.pdf`, `.docx`, `.mp3`, `.wav`, or `.m4a` |
@@ -283,10 +247,6 @@ hand-editing `.env` — see [Quick Start](#quick-start).
 | `QDRANT_COLLECTION` | `conversations` | Conversation vector collection |
 | `QDRANT_DOCS_COLLECTION` | `documents` | Document vector collection |
 | `MEMORY_SEARCH_K` | `5` | Number of conversation memory hits |
-| `JIRA_BASE_URL` | empty | Jira Cloud base URL (read only by mcp-server) |
-| `JIRA_EMAIL` | empty | Jira Cloud account email (read only by mcp-server) |
-| `JIRA_API_TOKEN` | empty | Jira Cloud API token (read only by mcp-server) |
-| `GITHUB_TOKEN` | empty | GitHub Personal Access Token (read only by mcp-server) |
 
 Minimal local `.env` for Ollama chat (embeddings need no config — the bundled
 `embeddings` service handles that on its own):
@@ -342,10 +302,10 @@ ollama pull llama3
 cp .env.example .env
 ```
 
-Every value has a working default (local Ollama chat, bundled embeddings, no
-Jira/GitHub) — this step just gives you a file to edit. You can also skip
-editing `.env` by hand entirely and use the dashboard's Setup Wizard (step 3
-below) or Settings page instead.
+Every value has a working default (local Ollama chat, bundled embeddings) —
+this step just gives you a file to edit. You can also skip editing `.env` by
+hand entirely and use the dashboard's Setup Wizard (step 3 below) or Settings
+page instead.
 
 ### 1. Start infra: Qdrant, embeddings, web search, mcp-server
 
@@ -354,11 +314,11 @@ docker compose up qdrant embeddings searxng mcp-server -d
 ```
 
 The first start downloads the embedding model (a few hundred MB) — give it a
-minute before moving on. `mcp-server` holds your Jira/GitHub credentials;
-`chat-agent` calls it for all PM tool operations, never the vendor APIs
-directly. Starting these four here — rather than the full `docker compose up`
-— leaves `chat-agent` and `dashboard` to run locally with hot reload (steps
-2–3), which is faster for development.
+minute before moving on. `mcp-server` holds any web-search credentials (e.g.
+Brave); `chat-agent` calls it for all outbound tool operations, never the
+vendor APIs directly. Starting these four here — rather than the full
+`docker compose up` — leaves `chat-agent` and `dashboard` to run locally with
+hot reload (steps 2–3), which is faster for development.
 
 ### 2. Start chat-agent
 
@@ -422,13 +382,12 @@ npm run lint
 ## Known Implementation Notes
 
 - `mcp-server` (Go, port 8083) is an **active** dependency — `chat-agent` routes
-  all Jira/GitHub calls through it. Always start it alongside Qdrant.
+  web search and other outbound tool calls through it. Always start it
+  alongside Qdrant.
 - `clients/dashboard/vite.config.js` proxies `/api` to `localhost:8080` for
   development (`npm run dev`, port 5173) — this is the only supported way to
   run the dashboard. The `dashboard` Docker Compose service's `nginx.conf` is
   currently broken; don't use `docker compose up dashboard`.
-- The extension has UI support for retrying failed actions, but the FastAPI
-  route `/actions/{action_id}/retry` is not currently implemented.
 - `briefing.py` attempts a best-effort RAG lookup with a vector-store interface
   that does not match the current `VectorStore`; structured briefing data still
   works, but briefing RAG context should be corrected.
@@ -448,9 +407,6 @@ npm run lint
 - Web search defaults to a bundled, self-hosted SearXNG instance (no API key,
   no third party) and only runs when explicitly turned on for a message;
   Brave Search API is available as an opt-in alternative.
-- Jira/GitHub sync and comment approval call external APIs only when configured.
-- Human approval is required before the assistant writes comments to Jira or
-  GitHub.
 - CORS is permissive because the active backend is intended to run on localhost.
 
 ## Active Scope
@@ -458,12 +414,11 @@ npm run lint
 Research Agent is the entire scope of this repository:
 
 - FastAPI chat-agent
-- Go mcp-server (Jira/GitHub API gateway, web search)
+- Go mcp-server (web search gateway, and other outbound tool calls)
 - SQLite project and memory storage
 - Qdrant RAG/vector memory
 - Bundled embeddings service (Hugging Face Text Embeddings Inference)
 - Local Ollama chat, or a cloud OpenAI-compatible chat provider
 - Bundled SearXNG web search, or Brave Search API as an alternative
-- Jira/GitHub sync and comment approval
 - React dashboard with a first-run Setup Wizard and a Settings page
 - Chrome extension

@@ -2,10 +2,10 @@
 //
 // Why tracing here?
 //   The mcp-server sits between the chat-agent (Python) and vendor APIs
-//   (Jira, GitHub).  Every /tools/call request originates from a chat-agent
+//   (e.g. a search backend).  Every /tools/call request originates from a chat-agent
 //   /chat request.  By extracting the W3C traceparent header that the chat-agent
 //   injects, the mcp-server spans attach to the parent trace — so one Jaeger
-//   waterfall view shows the full journey from user message to Jira API and back.
+//   waterfall view shows the full journey from user message to vendor API and back.
 //
 // How to enable:
 //   Set OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 (or localhost:4318 when

@@ -20,10 +20,8 @@
 #   rag.py        — chunk + ingest documents; retrieve relevant chunks (per project)
 #   llm.py        — send a message list to the configured LLM backend, get a reply
 
-import json
 import logging
 import os
-import re
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -32,13 +30,9 @@ from fastapi.responses import StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
-from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-import httpx
-
-from actions import ActionStore, Action, execute_action, VALID_ACTION_TYPES, validate_payload
 from config import settings
 from document_state import DocumentStateStore
 from embeddings import embed, get_model_info as get_embeddings_model_info
@@ -51,7 +45,6 @@ from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
 import rag
 from request_context import set_request_id, new_request_id
-from sync import SyncStore, sync_project
 from transcript import (
     TranscriptStore,
     extract_structured,
@@ -67,16 +60,13 @@ logger = logging.getLogger("uvicorn.error")
 project_store = ProjectStore(settings.sqlite_path)
 store = ConversationStore(settings.sqlite_path)
 vstore = VectorStore(url=settings.qdrant_url)
-sync_store = SyncStore(settings.sqlite_path)
-action_store = ActionStore(settings.sqlite_path)
 transcript_store = TranscriptStore(settings.sqlite_path)
 document_state_store = DocumentStateStore(settings.sqlite_path)
 flashcard_store = FlashcardStore(settings.sqlite_path)
 
-# Shared MCPClient — the single gateway to all PM vendor APIs.
-# Credentials (JIRA_*, GITHUB_TOKEN) live on the mcp-server; this service
-# never reads them.  If the mcp-server is unreachable or a tool is not
-# configured, sync/approve return HTTP 502 with a clear error message.
+# Shared MCPClient — the gateway to mcp-server's tools (web search, etc.).
+# Credentials (e.g. BRAVE_SEARCH_API_KEY) live on the mcp-server; this
+# service never reads them.
 _mcp = MCPClient(
     base_url=settings.mcp_base_url,
     timeout=settings.mcp_timeout_s,
@@ -147,9 +137,8 @@ async def lifespan(app: FastAPI):
         await vstore.ensure_collection(settings.qdrant_collection, dim=EMBED_DIM)
         await vstore.ensure_collection(settings.qdrant_docs_collection, dim=EMBED_DIM)
 
-    # SyncStore, TranscriptStore, and DocumentStateStore tables are always
-    # safe to create — no schema coupling to the version wipe above.
-    await sync_store.init()
+    # TranscriptStore and DocumentStateStore tables are always safe to
+    # create — no schema coupling to the version wipe above.
     await transcript_store.init()
     await document_state_store.init()
     await flashcard_store.init()
@@ -226,21 +215,17 @@ app.add_middleware(RequestIdMiddleware)
 # Project CRUD models
 class ProjectCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, description="Human-readable project name.")
-    # Optional bag of external references (Jira key, GitHub repo, ...).
-    external_refs: dict = Field(default_factory=dict)
 
 
 class ProjectUpdateRequest(BaseModel):
-    # Both fields optional — callers send only what they want to change.
+    # Optional — callers send only what they want to change.
     name: str | None = None
-    external_refs: dict | None = None
 
 
 class ProjectOut(BaseModel):
     id: str
     name: str
     created_at: str
-    external_refs: dict[str, Any] | None = None
 
     @field_validator("created_at", mode="before")
     @classmethod
@@ -260,7 +245,6 @@ def _project_to_out(p: Project) -> ProjectOut:
         id=p.id,
         name=p.name,
         created_at=p.created_at,
-        external_refs=p.external_refs,
     )
 
 
@@ -274,7 +258,7 @@ class ChatRequest(BaseModel):
 
 class Citation(BaseModel):
     ref: int  # 1-based reference number matching [N] in the reply text.
-    source: str  # The source label (e.g. "jira:KAN-1", "notes.md") — or a URL for web results.
+    source: str  # The source label (e.g. "notes.md") — or a URL for web results.
     chunk_index: int  # Position of this chunk in the original document (0-based); 0 for web results.
 
 
@@ -397,7 +381,7 @@ class StandupOut(BaseModel):
 
 
 class SourceOut(BaseModel):
-    source: str    # Label supplied at ingest time (e.g. "notes.md", "jira:KAN-1").
+    source: str    # Label supplied at ingest time (e.g. "notes.md").
     chunks: int    # Number of Qdrant points stored under this source label.
     enabled: bool  # Whether this source is included in RAG retrieval.
 
@@ -411,33 +395,6 @@ class MemoryHit(BaseModel):
     role: str  # 'user' or 'assistant'.
     content: str  # The original message text.
     session_id: str  # Which conversation the hit came from.
-
-
-class ProposeActionRequest(BaseModel):
-    action_type: str  # Must be in VALID_ACTION_TYPES.
-    payload: dict  # {"item_id": "...", "body": "...", "ref_key": "..."}
-
-
-class ActionOut(BaseModel):
-    id: str
-    project_id: str
-    action_type: str
-    status: str
-    payload: dict
-    created_at: str
-    completed_at: str | None
-
-
-def _action_to_out(a: Action) -> ActionOut:
-    return ActionOut(
-        id=a.id,
-        project_id=a.project_id,
-        action_type=a.action_type,
-        status=a.status,
-        payload=a.payload,
-        created_at=a.created_at,
-        completed_at=a.completed_at,
-    )
 
 
 # Helpers
@@ -502,7 +459,7 @@ async def post_models_pull(req: ModelPullRequest):
 @app.get("/config")
 async def get_config():
     """Read-only effective LLM configuration.  Never includes secrets —
-    openai_api_key/jira_api_token/github_token are never serialized here.
+    openai_api_key is never serialized here.
 
     The embeddings model name is read live from the embeddings service's own
     /info endpoint (not a chat-agent-side constant) so it can never drift out
@@ -536,17 +493,6 @@ async def get_config():
     }
 
 
-@app.get("/integrations/status")
-async def get_integrations_status():
-    """Jira/GitHub configured status, proxied from mcp-server — the only
-    process allowed to hold those credentials.  Never includes secrets.
-    """
-    try:
-        return await _mcp.get_integrations_status()
-    except MCPError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-
-
 class EnvVarUpdateRequest(BaseModel):
     value: str
 
@@ -578,8 +524,8 @@ async def get_config_env():
 async def put_config_env(key: str, req: EnvVarUpdateRequest):
     """Write one env var. Keys owned by this service are written locally;
     everything else is proxied to mcp-server, the only process allowed to
-    hold Jira/GitHub/web-search credentials — this service never persists
-    or logs those values, only forwards them.
+    hold web-search credentials — this service never persists or logs
+    those values, only forwards them.
     """
     if key in env_config.OWNED_KEYS:
         try:
@@ -602,10 +548,7 @@ async def post_projects(req: ProjectCreateRequest) -> ProjectOut:
     The returned id is a UUID string — stable, safe to use in URLs/JSON.
     """
     try:
-        project = await project_store.create(
-            name=req.name,
-            external_refs=req.external_refs,
-        )
+        project = await project_store.create(name=req.name)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     logger.info("Created project %r (%s)", project.name, project.id)
@@ -621,12 +564,11 @@ async def get_projects() -> list[ProjectOut]:
 
 @app.patch("/projects/{project_id}", response_model=ProjectOut)
 async def patch_project(project_id: str, req: ProjectUpdateRequest) -> ProjectOut:
-    """Partial update — change name and/or external_refs."""
+    """Partial update — change name."""
     try:
         updated = await project_store.update(
             project_id,
             name=req.name,
-            external_refs=req.external_refs,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -652,10 +594,6 @@ async def delete_project(project_id: str):
     # user can retry.
     await vstore.delete_by_project(settings.qdrant_collection, project_id)
     await vstore.delete_by_project(settings.qdrant_docs_collection, project_id)
-    await sync_store.delete_by_project(project_id)
-    # action_store.delete_by_project is also safe to call here even though
-    # sync_store already deleted the same rows — the second DELETE is a no-op.
-    await action_store.delete_by_project(project_id)
     await transcript_store.delete_by_project(project_id)
     await document_state_store.delete_by_project(project_id)
     await flashcard_store.delete_by_project(project_id)
@@ -668,170 +606,6 @@ async def delete_project(project_id: str):
 
     logger.info("Deleted project %s and all of its memory.", project_id)
     return {"deleted": True}
-
-
-# Routes — PM sync
-
-@app.post("/projects/{project_id}/sync")
-async def post_sync(project_id: str):
-    """Fetch items from all configured PM integrations for this project and
-    ingest them into the project's RAG document store.
-
-    Idempotent: items already ingested are overwritten with the same content,
-    so re-running sync does not grow the vector store unboundedly.  The
-    last_synced_at timestamp per external ref means only items updated since
-    the last sync are fetched on subsequent runs (incremental).
-
-    Requires the project to have at least one entry in external_refs whose
-    key matches a configured integration (jira_project_key or github_repo).
-    The matching credentials must be set as environment variables:
-      Jira:   JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN
-      GitHub: GITHUB_TOKEN
-    """
-    project = await _require_project(project_id)
-
-    if not project.external_refs:
-        raise HTTPException(
-            status_code=400,
-            detail="Project has no external_refs — attach a jira_project_key or github_repo first.",
-        )
-
-    try:
-        results = await sync_project(
-            project_id=project_id,
-            external_refs=project.external_refs,
-            sync_store=sync_store,
-            vstore=vstore,
-            mcp=_mcp,
-        )
-    except MCPError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"PM API returned {exc.response.status_code}: {exc.response.text[:200]}",
-        ) from exc
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not reach PM API: {exc}",
-        ) from exc
-
-    return {
-        "synced_items": sum(r.items_fetched for r in results),
-        "chunks_stored": sum(r.chunks_stored for r in results),
-        "details": [
-            {
-                "ref_key": r.ref_key,
-                "ref_value": r.ref_value,
-                "items": r.items_fetched,
-                "chunks": r.chunks_stored,
-            }
-            for r in results
-        ],
-    }
-
-
-@app.get("/projects/{project_id}/sync")
-async def get_sync_status(project_id: str):
-    """Return the last-synced timestamp per external ref for this project.
-
-    Useful for displaying sync status in the UI without triggering a sync.
-    Returns an empty refs list if the project has never been synced.
-    """
-    await _require_project(project_id)
-    status = await sync_store.get_sync_status(project_id)
-    return {"refs": status}
-
-
-# Routes — pending actions
-
-@app.post("/projects/{project_id}/actions", response_model=ActionOut)
-async def propose_action(project_id: str, req: ProposeActionRequest) -> ActionOut:
-    """Create a pending action for human approval.
-
-    The agent (via the DRAFT_ACTION chat post-processor) or a human in the
-    extension form calls this endpoint.  Nothing is written to Jira/GitHub
-    until /actions/{id}/approve is called.
-    """
-    await _require_project(project_id)
-    if req.action_type not in VALID_ACTION_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown action_type {req.action_type!r}. "
-            f"Allowed: {sorted(VALID_ACTION_TYPES)}",
-        )
-    missing = validate_payload(req.action_type, req.payload)
-    if missing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"payload must include non-empty '{missing}'",
-        )
-    action_id = await action_store.create_pending(
-        project_id, req.action_type, req.payload
-    )
-    action = await action_store.get(action_id)
-    return _action_to_out(action)
-
-
-@app.get("/projects/{project_id}/actions", response_model=list[ActionOut])
-async def list_actions(
-    project_id: str,
-    status: str | None = Query(None, description="Filter by status (e.g. 'pending')."),
-) -> list[ActionOut]:
-    """List actions for a project, newest first. Pass ?status=pending to filter."""
-    await _require_project(project_id)
-    actions = await action_store.list_for_project(project_id, status=status)
-    return [_action_to_out(a) for a in actions]
-
-
-@app.post("/actions/{action_id}/approve")
-async def approve_action(action_id: str):
-    """Approve a pending action and execute it immediately.
-
-    On success: returns {status: "executed", result: {id, url, created_at}}.
-    On integration failure: marks the action as 'failed' and returns 502.
-    """
-    action = await action_store.get(action_id)
-    if action is None:
-        raise HTTPException(status_code=404, detail=f"Action {action_id!r} not found.")
-    if action.status != "pending":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Action {action_id!r} is {action.status!r}, not 'pending'.",
-        )
-
-    await action_store.approve(action_id)
-    # Re-fetch with updated status so execute_action sees it correctly.
-    action = await action_store.get(action_id)
-
-    try:
-        result = await execute_action(action, _mcp, project_store)
-    except Exception as exc:
-        error_msg = str(exc)
-        await action_store.mark_failed(action_id, error_msg)
-        logger.error("Action %s failed: %s", action_id, error_msg)
-        raise HTTPException(
-            status_code=502,
-            detail=f"Integration call failed: {error_msg}",
-        ) from exc
-
-    await action_store.mark_executed(action_id, result)
-    logger.info("Action %s executed: %s", action_id, result.get("url", ""))
-    return {"status": "executed", "result": result}
-
-
-@app.post("/actions/{action_id}/reject")
-async def reject_action(action_id: str):
-    """Reject a pending action. No write is made to the PM system."""
-    action = await action_store.get(action_id)
-    if action is None:
-        raise HTTPException(status_code=404, detail=f"Action {action_id!r} not found.")
-    try:
-        await action_store.reject(action_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {"status": "rejected"}
 
 
 # Routes — chat + ingest + memory search (now project-scoped)
@@ -1250,26 +1024,6 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
         exclude_sources=_disabled_sources,
     )
 
-    # 3c. If the message explicitly names ticket keys (e.g. "KAN-8", "#42"),
-    # fetch those chunks by exact source label and prepend them.  Semantic
-    # search alone misses these when the query is action-oriented ("write a
-    # comment to KAN-8") rather than content-oriented.
-    _jira_keys = re.findall(r'\b([A-Z][A-Z0-9]+-\d+)\b', req.message)
-    _gh_nums   = re.findall(r'#(\d+)', req.message)
-    _pinned_sources = (
-        [f"jira:{k}" for k in _jira_keys]
-        + [f"github:{n}" for n in _gh_nums]
-    )
-    _seen_sources = {c.source for c in doc_chunks}
-    for _src in _pinned_sources:
-        if _src in _disabled_sources:
-            continue
-        if _src not in _seen_sources:
-            _pinned = await rag.retrieve_by_source(req.project_id, _src, vstore=vstore)
-            if _pinned:
-                doc_chunks = _pinned + doc_chunks
-                _seen_sources.add(_src)
-
     logger.info(
         "RAG[%s]: retrieved %d doc chunks for query %r: %s",
         req.project_id,
@@ -1362,24 +1116,24 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
                 "content": (
                     "You are the project brain for a local-first personal assistant. "
                     "The excerpts below were retrieved from THIS user's own knowledge "
-                    "base — ingested documents and PM tickets (Jira / GitHub) synced "
-                    "into this project by the user themselves. They are the "
-                    "authoritative source of truth for this project.\n\n"
+                    "base — documents ingested into this project by the user "
+                    "themselves. They are the authoritative source of truth for "
+                    "this project.\n\n"
                     "Rules:\n"
-                    "1. When the user asks about tickets, issues, tasks, status, or "
-                    "   assignees, answer FROM these excerpts. The chunks ARE the "
-                    "   data — they are not pointers to an external system.\n"
+                    "1. When the user asks about tasks, status, or content covered "
+                    "   by these excerpts, answer FROM these excerpts. The chunks "
+                    "   ARE the data — they are not pointers to an external system.\n"
                     "2. Cite by reference number, e.g. [1], when you use information "
                     "   from a chunk. You may also include the source label for "
-                    "   clarity, e.g. [1][jira:KAN-1].\n"
-                    "3. CRITICAL: If a chunk is present below (e.g. [1] source: "
-                    "   jira:KAN-8), that ticket's data IS available to you. Do NOT "
-                    "   claim the ticket is missing, has not appeared, or that you "
-                    "   cannot access it. Read the chunk and answer from it.\n"
+                    "   clarity, e.g. [1][notes.md].\n"
+                    "3. CRITICAL: If a chunk is present below, that information IS "
+                    "   available to you. Do NOT claim it is missing, has not "
+                    "   appeared, or that you cannot access it. Read the chunk and "
+                    "   answer from it.\n"
                     "4. Never say 'it has not appeared in my knowledge base' or "
                     "   'I cannot retrieve' when the chunk is listed below.\n"
                     "5. If the excerpts truly do not contain the answer, say so "
-                    "   plainly and suggest the user run Sync.\n\n"
+                    "   plainly.\n\n"
                     "--- PROJECT KNOWLEDGE ---\n"
                     f"{doc_lines}\n"
                     "--- END PROJECT KNOWLEDGE ---"
@@ -1431,40 +1185,6 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
             }
         )
 
-    # Inject the TOOLS block when PM integrations are live for this project.
-    # Only shown when the project has at least one ref matching a configured
-    # integration — avoids cluttering prompts for projects with no PM links.
-    project_for_tools = await project_store.get(req.project_id)
-    live_refs = {
-        k
-        for k in (project_for_tools.external_refs if project_for_tools else {})
-        if k in ("jira_project_key", "github_repo")
-    }
-    if live_refs:
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "TOOLS YOU CAN PROPOSE\n"
-                    "You may propose at most one write action per reply by emitting "
-                    "this exact pattern on its own line:\n"
-                    "<<DRAFT_ACTION>>{...}<<END>>\n"
-                    "The user will approve or reject in the Pending Actions panel before "
-                    "any write reaches the external system.\n\n"
-                    "Supported action_type values and their payload shapes:\n"
-                    '  jira:add_comment    — {"action_type":"jira:add_comment","payload":{"item_id":"PROJ-12","body":"...","ref_key":"jira_project_key"}}\n'
-                    '  jira:create_issue   — {"action_type":"jira:create_issue","payload":{"ref_key":"jira_project_key","summary":"...","issue_type":"Task","description":"..."}}\n'
-                    '  jira:update_issue   — {"action_type":"jira:update_issue","payload":{"item_id":"PROJ-12","ref_key":"jira_project_key","summary":"...","description":"..."}}\n'
-                    '  jira:close_issue    — {"action_type":"jira:close_issue","payload":{"item_id":"PROJ-12","ref_key":"jira_project_key","status":"Done"}}\n'
-                    '  github:add_comment  — {"action_type":"github:add_comment","payload":{"item_id":"42","body":"...","ref_key":"github_repo"}}\n\n'
-                    "Rules: propose only when the user explicitly asks for a Jira or GitHub write. "
-                    "issue_type and description are optional for create. "
-                    "status is optional for close (defaults to Done). "
-                    "For update, include at least summary or description."
-                ),
-            }
-        )
-
     # Append sanitized recent history and the new user message.
     messages += sanitized_recent + [{"role": "user", "content": req.message}]
 
@@ -1484,50 +1204,7 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     # 6. Call the LLM (backend and model fixed by deploy-time config).
     reply = await chat(messages)
 
-    # Post-process the reply: extract <<DRAFT_ACTION>>{...}<<END>> if present.
-    # On success, create a pending action and replace the tag with a human-
-    # readable marker.  On any parse/validation error, strip the tag silently
-    # so the raw JSON never reaches the user's transcript.
-    draft_pattern = re.compile(r"<<DRAFT_ACTION>>(.*?)<<END>>", re.DOTALL)
-    match = draft_pattern.search(reply)
-    if match:
-        raw_json = match.group(1).strip()
-        try:
-            draft = json.loads(raw_json)
-            action_type = draft.get("action_type", "")
-            payload = draft.get("payload", {})
-            if (
-                action_type in VALID_ACTION_TYPES
-                and validate_payload(action_type, payload) is None
-            ):
-                action_id = await action_store.create_pending(
-                    req.project_id, action_type, payload
-                )
-                replacement = (
-                    f"\n[Drafted action #{action_id[:8]}… — "
-                    "approve in the Pending Actions panel]\n"
-                )
-                logger.info(
-                    "Drafted action %s (type=%s item=%s) for project %s",
-                    action_id,
-                    action_type,
-                    payload.get("item_id"),
-                    req.project_id,
-                )
-            else:
-                replacement = ""
-                logger.warning(
-                    "DRAFT_ACTION block had missing or invalid fields — stripped. "
-                    "action_type=%r payload keys=%s",
-                    action_type,
-                    list(payload.keys()),
-                )
-        except (json.JSONDecodeError, TypeError) as exc:
-            replacement = ""
-            logger.warning("Could not parse DRAFT_ACTION block: %s", exc)
-        reply = draft_pattern.sub(replacement, reply).strip()
-
-    # 7. Persist the assistant reply to SQLite (cleaned of any DRAFT_ACTION tags).
+    # 7. Persist the assistant reply to SQLite.
     await store.append(req.project_id, req.session_id, "assistant", reply)
 
     # 8. Store the assistant reply vector in Qdrant conversations.

@@ -68,20 +68,6 @@ async def test_create_returns_project_with_id(tmp_path):
     assert p.name == "Alpha"
     assert p.id and len(p.id) > 0
     assert p.created_at != ""
-    assert p.external_refs == {}
-
-
-@pytest.mark.asyncio
-async def test_create_with_external_refs(tmp_path):
-    """external_refs passed at creation time are persisted."""
-    projects, _ = await make_stores(tmp_path)
-    refs = {"jira_project_key": "ALPHA", "github_repo": "org/repo"}
-    p = await projects.create("Alpha", external_refs=refs)
-    assert p.external_refs == refs
-    # And survives a round-trip through the DB.
-    fetched = await projects.get(p.id)
-    assert fetched is not None
-    assert fetched.external_refs == refs
 
 
 @pytest.mark.asyncio
@@ -136,24 +122,12 @@ async def test_get_returns_the_project(tmp_path):
 
 @pytest.mark.asyncio
 async def test_update_name_only(tmp_path):
-    """Passing name updates only the name; external_refs untouched."""
+    """Passing name updates the project's name."""
     projects, _ = await make_stores(tmp_path)
-    p = await projects.create("Alpha", external_refs={"key": "val"})
+    p = await projects.create("Alpha")
     updated = await projects.update(p.id, name="Beta")
     assert updated is not None
     assert updated.name == "Beta"
-    assert updated.external_refs == {"key": "val"}
-
-
-@pytest.mark.asyncio
-async def test_update_external_refs_only(tmp_path):
-    """Passing external_refs updates only that; name untouched."""
-    projects, _ = await make_stores(tmp_path)
-    p = await projects.create("Alpha", external_refs={"old": "val"})
-    updated = await projects.update(p.id, external_refs={"new": "val"})
-    assert updated is not None
-    assert updated.name == "Alpha"
-    assert updated.external_refs == {"new": "val"}
 
 
 @pytest.mark.asyncio

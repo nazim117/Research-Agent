@@ -2,7 +2,7 @@
 #
 # Two responsibilities:
 #   1. Persist raw transcript text into RAG (same path as POST /ingest) so
-#      semantic search picks it up alongside Jira tickets, notes, etc.
+#      semantic search picks it up alongside other ingested documents.
 #   2. Run a separate LLM call that returns three structured lists —
 #      decisions, action items, risks — and store them in dedicated SQLite
 #      tables.  The structured tables answer questions that pure RAG cannot:
@@ -17,11 +17,9 @@
 #   paths even though both run from the same /ingest/transcript request.
 #
 # Naming note:
-#   The "actions" table from Step 7 is reserved for the human-in-the-loop PM
-#   write-approval flow (jira:add_comment, github:add_comment).  Transcript
-#   action items are a different concept (commitments made in a meeting), so
-#   they live in their own table called `action_items`.  Same word, different
-#   domain — the rename keeps the two from colliding.
+#   Transcript action items (commitments made in a meeting) live in their own
+#   table called `action_items`, distinct from any other use of the word
+#   "action" elsewhere in the codebase.
 #
 # Idempotency:
 #   POST /ingest/transcript with the same `source` replaces all prior content

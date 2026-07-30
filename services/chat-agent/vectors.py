@@ -352,15 +352,15 @@ class VectorStore:
     ) -> None:
         """Remove all points for a specific source document within one project.
 
-        Called by sync.py before re-ingesting a PM item so that re-syncing
-        the same ticket doesn't stack duplicate vectors.  Also handles the
-        "ticket was edited and now has fewer chunks" case — old trailing
+        Called before re-ingesting a document/transcript so that re-ingesting
+        the same source doesn't stack duplicate vectors.  Also handles the
+        "document was edited and now has fewer chunks" case — old trailing
         chunks disappear cleanly because we delete-then-rewrite, not append.
 
         Args:
             collection: Usually settings.qdrant_docs_collection ("documents").
             project_id: Restrict deletion to this project's points only.
-            source:     The source label used at ingest time (e.g. "jira:KAN-1").
+            source:     The source label used at ingest time (e.g. "notes.md").
         """
         try:
             await self._client.delete(

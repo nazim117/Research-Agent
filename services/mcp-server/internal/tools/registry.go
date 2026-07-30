@@ -18,22 +18,12 @@ import (
 
 // Registry holds shared state (e.g. the memory store) and dispatches tool calls.
 type Registry struct {
-	mem    *memoryStore
-	jira   *jiraClient   // nil if JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN not set
-	github *githubClient // nil if GITHUB_TOKEN not set
+	mem *memoryStore
 }
 
 // NewRegistry constructs a Registry with all tools ready.
-// Jira and GitHub clients are only initialised when the required env vars are present.
 func NewRegistry() *Registry {
-	r := &Registry{mem: newMemoryStore()}
-	if jiraIsConfigured() {
-		r.jira = newJiraClient()
-	}
-	if githubIsConfigured() {
-		r.github = newGitHubClient()
-	}
-	return r
+	return &Registry{mem: newMemoryStore()}
 }
 
 // Definitions returns the full tool list sent to MCP clients on tools/list.
@@ -43,39 +33,7 @@ func (r *Registry) Definitions() []mcp.ToolDefinition {
 	defs = append(defs, webDefinitions()...)
 	defs = append(defs, fileDefinitions()...)
 	defs = append(defs, httpDefinitions()...)
-	if r.jira != nil {
-		defs = append(defs, jiraDefinitions()...)
-	}
-	if r.github != nil {
-		defs = append(defs, githubDefinitions()...)
-	}
 	return defs
-}
-
-// IntegrationsStatusOut reports whether Jira/GitHub are configured, for
-// display in the dashboard. Never includes secrets (email, API token) —
-// only configured state and the non-secret Jira base URL.
-type IntegrationsStatusOut struct {
-	Jira struct {
-		Configured bool   `json:"configured"`
-		BaseURL    string `json:"base_url"`
-	} `json:"jira"`
-	GitHub struct {
-		Configured bool `json:"configured"`
-	} `json:"github"`
-}
-
-// IntegrationsStatus reports Jira/GitHub configured state from the clients
-// already constructed in NewRegistry — no env vars are re-read here, and no
-// secret values (email, token) are ever included.
-func (r *Registry) IntegrationsStatus() IntegrationsStatusOut {
-	var out IntegrationsStatusOut
-	if r.jira != nil {
-		out.Jira.Configured = true
-		out.Jira.BaseURL = r.jira.baseURL
-	}
-	out.GitHub.Configured = r.github != nil
-	return out
 }
 
 // envVarSpec describes one env var this service owns for the Settings UI's
@@ -90,10 +48,6 @@ type envVarSpec struct {
 // via EnvVars/SetEnvVar. Any key outside this list is rejected — this
 // endpoint must never be usable to set arbitrary env vars.
 var envVarAllowlist = []envVarSpec{
-	{key: "JIRA_BASE_URL", secret: false},
-	{key: "JIRA_EMAIL", secret: false},
-	{key: "JIRA_API_TOKEN", secret: true},
-	{key: "GITHUB_TOKEN", secret: true},
 	{key: "BRAVE_SEARCH_API_KEY", secret: true},
 	{key: "SEARXNG_BASE_URL", secret: false},
 }
@@ -137,8 +91,7 @@ func maskHint(value string, secret bool) string {
 
 // SetEnvVar persists a new value for one allowlisted env var to the .env
 // file at envPath, and updates the current process's environment so
-// EnvVars() reflects it immediately. The Jira/GitHub clients already
-// constructed in this Registry are unaffected until the process restarts.
+// EnvVars() reflects it immediately.
 func (r *Registry) SetEnvVar(key, value, envPath string) error {
 	allowed := false
 	for _, spec := range envVarAllowlist {
@@ -195,55 +148,6 @@ func (r *Registry) Call(name string, args map[string]any) (mcp.ToolCallResult, e
 	// http
 	case "http_request":
 		return httpRequest(args)
-
-	// jira
-	case "jira_search_issues":
-		if r.jira == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
-		}
-		return r.jira.searchIssues(args)
-	case "jira_get_issue":
-		if r.jira == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
-		}
-		return r.jira.getIssue(args)
-	case "jira_add_comment":
-		if r.jira == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
-		}
-		return r.jira.addComment(args)
-	case "jira_create_issue":
-		if r.jira == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
-		}
-		return r.jira.createIssue(args)
-	case "jira_update_issue":
-		if r.jira == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
-		}
-		return r.jira.updateIssue(args)
-	case "jira_close_issue":
-		if r.jira == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("jira is not configured")
-		}
-		return r.jira.closeIssue(args)
-
-	// github
-	case "github_list_issues":
-		if r.github == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("github is not configured")
-		}
-		return r.github.listIssues(args)
-	case "github_get_issue":
-		if r.github == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("github is not configured")
-		}
-		return r.github.getIssue(args)
-	case "github_add_comment":
-		if r.github == nil {
-			return mcp.ToolCallResult{}, fmt.Errorf("github is not configured")
-		}
-		return r.github.addComment(args)
 
 	default:
 		return mcp.ToolCallResult{}, fmt.Errorf("unknown tool: %q", name)

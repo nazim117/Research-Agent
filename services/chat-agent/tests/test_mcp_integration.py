@@ -3,18 +3,13 @@
 # These tests call MCPClient.call() against a live mcp-server (port 8083).
 # Skipped when the mcp-server is unreachable (conftest.mcp_up).
 #
-# The mcp-server is started WITHOUT Jira/GitHub credentials, so:
-#   - memory_* tools are always available (no creds needed)
-#   - jira_* tools raise MCPError because they return isError=true
-#
 # What is covered:
 #   - The real chat-agent ↔ mcp-server HTTP boundary
 #   - MCPClient.call() happy path (memory_set / memory_get)
-#   - MCPClient.call() isError path (jira_search_issues without creds)
 
 import pytest
 
-from mcp_client import MCPClient, MCPError
+from mcp_client import MCPClient
 
 pytestmark = pytest.mark.integration
 
@@ -54,24 +49,6 @@ async def test_memory_set_overwrites(mcp):
 
     result = await mcp.call("memory_get", {"key": key})
     assert "second" in str(result)
-
-
-# ─── tools that require missing vendor credentials ────────────────────────────
-
-async def test_jira_search_raises_mcp_error_without_creds(mcp):
-    """jira_search_issues raises MCPError when mcp-server has no Jira credentials.
-
-    This exercises the isError=true → MCPError path in MCPClient.call(),
-    which is the code path that main.py's /sync endpoint must handle.
-    """
-    with pytest.raises(MCPError) as exc_info:
-        await mcp.call("jira_search_issues", {"project_key": "TEST", "jql": "project=TEST"})
-
-    # The error message should indicate Jira is not configured.
-    err_msg = str(exc_info.value).lower()
-    assert any(keyword in err_msg for keyword in ("jira", "not configured", "error", "tool")), (
-        f"Unexpected error message: {exc_info.value}"
-    )
 
 
 # ─── health check ─────────────────────────────────────────────────────────────

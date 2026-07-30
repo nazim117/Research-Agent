@@ -3,7 +3,7 @@ export default function WelcomeStep() {
     <div className="wizard-welcome">
       <div className="wizard-welcome-headline">Welcome to Research Agent</div>
       <div className="wizard-welcome-sub">
-        Your local-first assistant for project memory, document search, and Jira/GitHub sync.
+        Your local-first assistant for project memory and document search.
         Let's get your machine set up.
       </div>
     </div>

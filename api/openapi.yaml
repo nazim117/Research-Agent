@@ -9,13 +9,11 @@ servers:
 
 tags:
   - name: projects
-    description: Project CRUD and PM integration sync
+    description: Project CRUD
   - name: chat
     description: Conversational interface to the project brain
   - name: ingest
     description: Document and URL ingestion pipeline
-  - name: actions
-    description: Human-approval flow for AI-proposed actions
   - name: studio
     description: Extracted decisions, risks, action items, briefings, and standups
   - name: memory
@@ -132,171 +130,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /projects/{project_id}/sync:
-    post:
-      tags: [projects]
-      summary: Sync PM integrations into the project RAG store
-      operationId: syncProject
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-      responses:
-        "200":
-          description: Sync results per external ref
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SyncResult"
-        "400":
-          description: No external_refs configured
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Project not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "502":
-          description: PM API unreachable or returned an error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    get:
-      tags: [projects]
-      summary: Get last-synced timestamps per external ref
-      operationId: getSyncStatus
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-      responses:
-        "200":
-          description: Sync status per ref
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SyncStatus"
-        "404":
-          description: Project not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /projects/{project_id}/actions:
-    post:
-      tags: [actions]
-      summary: Propose a pending action for human approval
-      operationId: proposeAction
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ProposeActionRequest"
-      responses:
-        "200":
-          description: Created pending action
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Action"
-        "400":
-          description: Invalid action_type or payload
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Project not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-    get:
-      tags: [actions]
-      summary: List actions for a project
-      operationId: listActions
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - name: status
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/ActionStatus"
-      responses:
-        "200":
-          description: List of actions
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Action"
-
-  /actions/{action_id}/approve:
-    post:
-      tags: [actions]
-      summary: Approve and execute a pending action
-      operationId: approveAction
-      parameters:
-        - $ref: "#/components/parameters/ActionId"
-      responses:
-        "200":
-          description: Action executed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Action"
-        "400":
-          description: Action is not pending
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Action not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "502":
-          description: Integration call failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /actions/{action_id}/reject:
-    post:
-      tags: [actions]
-      summary: Reject a pending action
-      operationId: rejectAction
-      parameters:
-        - $ref: "#/components/parameters/ActionId"
-      responses:
-        "200":
-          description: Action rejected
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Action"
-        "400":
-          description: Action cannot be rejected in its current state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-        "404":
-          description: Action not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
   /chat:
     post:
       tags: [chat]
@@ -369,7 +202,7 @@ paths:
   /ingest/transcript:
     post:
       tags: [ingest]
-      summary: Ingest a pasted transcript (chunk + extract decisions/actions/risks)
+      summary: Ingest a pasted transcript (chunk + extract decisions/action items/risks)
       operationId: ingestTranscript
       requestBody:
         required: true
@@ -700,13 +533,6 @@ components:
       schema:
         type: string
         format: uuid
-    ActionId:
-      name: action_id
-      in: path
-      required: true
-      schema:
-        type: string
-        format: uuid
 
   schemas:
     Error:
@@ -737,11 +563,6 @@ components:
           type: string
           format: date-time
           description: ISO 8601 UTC timestamp (e.g. "2026-04-18T11:08:07Z").
-        external_refs:
-          type: object
-          additionalProperties: true
-          nullable: true
-          description: Bag of PM references (jira_project_key, github_repo, ...).
 
     ProjectCreateRequest:
       type: object
@@ -750,92 +571,12 @@ components:
         name:
           type: string
           minLength: 1
-        external_refs:
-          type: object
-          additionalProperties: true
-          default: {}
 
     ProjectUpdateRequest:
       type: object
       properties:
         name:
           type: string
-          nullable: true
-        external_refs:
-          type: object
-          additionalProperties: true
-          nullable: true
-
-    SyncResult:
-      type: object
-      required: [synced]
-      description: Number of items synced per external ref key.
-      properties:
-        synced:
-          type: integer
-          description: Total items written to the RAG store.
-          example: 42
-        detail:
-          type: object
-          additionalProperties:
-            type: integer
-          description: Per-ref breakdown (e.g. {"jira_project_key":42}).
-          example:
-            jira_project_key: 42
-
-    SyncStatus:
-      type: object
-      description: Last-synced timestamp per external ref key.
-      additionalProperties:
-        type: string
-        format: date-time
-        nullable: true
-      example:
-        jira_project_key: "2026-06-01T09:00:00Z"
-        github_repo: null
-
-    ActionStatus:
-      type: string
-      enum: [pending, executing, executed, rejected, failed]
-      description: >
-        Lifecycle of a human-approval action:
-        pending → executing → executed (happy path);
-        pending → rejected (human says no);
-        executing → failed (integration error).
-
-    ProposeActionRequest:
-      type: object
-      required: [action_type, payload]
-      properties:
-        action_type:
-          type: string
-        payload:
-          type: object
-          additionalProperties: true
-
-    Action:
-      type: object
-      required: [id, project_id, action_type, status, payload, created_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-        project_id:
-          type: string
-          format: uuid
-        action_type:
-          type: string
-        status:
-          $ref: "#/components/schemas/ActionStatus"
-        payload:
-          type: object
-          additionalProperties: true
-        created_at:
-          type: string
-          format: date-time
-        completed_at:
-          type: string
-          format: date-time
           nullable: true
 
     ChatRequest:

@@ -30,7 +30,7 @@ test.describe('project management', () => {
     await mockApi(page, {
       projects: [],
       // After create, return the new project in the list.
-      createProject: { id: 'new-1', name: 'My New Project', external_refs: {}, created_at: '2026-01-01T00:00:00' },
+      createProject: { id: 'new-1', name: 'My New Project', created_at: '2026-01-01T00:00:00' },
     });
 
     // Override GET /projects response after the create call to include the new project.
@@ -41,7 +41,7 @@ test.describe('project management', () => {
         // First call: empty; subsequent: include new project.
         const list = projectsCallCount === 1
           ? []
-          : [{ id: 'new-1', name: 'My New Project', external_refs: {}, created_at: '2026-01-01T00:00:00' }];
+          : [{ id: 'new-1', name: 'My New Project', created_at: '2026-01-01T00:00:00' }];
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(list) });
       }
       route.continue();

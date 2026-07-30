@@ -5,7 +5,6 @@ import WizardRail from './WizardRail.jsx';
 import WelcomeStep from './steps/WelcomeStep.jsx';
 import HealthCheckStep from './steps/HealthCheckStep.jsx';
 import ModelsStep from './steps/ModelsStep.jsx';
-import CredentialsStep from './steps/CredentialsStep.jsx';
 import ProjectStep from './steps/ProjectStep.jsx';
 import SuccessStep from './steps/SuccessStep.jsx';
 import './wizard.css';
@@ -13,14 +12,14 @@ import './wizard.css';
 export const PROGRESS_KEY = 'wizardProgress';
 export const STATUS_KEY = 'onboardingStatus';
 
-const STEPS = ['welcome', 'health', 'models', 'credentials', 'project'];
+const STEPS = ['welcome', 'health', 'models', 'project'];
 
 const DEFAULT_PROGRESS = {
   step: 'welcome',
   completedSteps: [],
   health: null,
   models: { chat: null },
-  project: { name: '', jiraKey: '', githubRepo: '' },
+  project: { name: '' },
 };
 
 function loadProgress() {
@@ -53,8 +52,6 @@ function isStepValid(step, progress) {
         Object.values(progress.health).every((s) => s.status === 'ok' || !s.required);
     case 'models':
       return Boolean(progress.models.chat);
-    case 'credentials':
-      return true;
     case 'project':
       return Boolean(progress.project.name.trim());
     default:
@@ -106,10 +103,7 @@ export default function SetupWizard({ onExit, onProjectCreated }) {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const refs = {};
-      if (progress.project.jiraKey) refs.jira_project_key = progress.project.jiraKey.trim();
-      if (progress.project.githubRepo) refs.github_repo = progress.project.githubRepo.trim();
-      await api.createProject(progress.project.name.trim(), refs);
+      await api.createProject(progress.project.name.trim());
       onProjectCreated?.();
       setProgress((p) => ({ ...p, completedSteps: STEPS, step: 'success' }));
       trySetItem(STATUS_KEY, 'completed');
@@ -146,8 +140,6 @@ export default function SetupWizard({ onExit, onProjectCreated }) {
         onModelsChange={(models) => setProgress((p) => ({ ...p, models }))}
       />
     );
-  } else if (progress.step === 'credentials') {
-    stepContent = <CredentialsStep />;
   } else if (progress.step === 'project') {
     stepContent = (
       <ProjectStep
@@ -213,11 +205,6 @@ export default function SetupWizard({ onExit, onProjectCreated }) {
                     ‹ Back
                   </button>
                   <div className="wizard-footer-right">
-                    {progress.step === 'credentials' && (
-                      <button className="wizard-link" onClick={handleNext} data-testid="wizard-skip-credentials">
-                        Skip for now
-                      </button>
-                    )}
                     <button
                       className="btn btn-primary"
                       onClick={handleNext}

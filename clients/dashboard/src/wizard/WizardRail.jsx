@@ -2,7 +2,6 @@ const STEP_LABELS = {
   welcome: 'Welcome',
   health: 'Health Check',
   models: 'Models',
-  credentials: 'Credentials',
   project: 'Project',
 };
 

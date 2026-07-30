@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import * as api from './api.js';
 import {
   IconX, IconSettings, IconRefresh, IconUpload, IconLoader,
-  IconSearch, IconBook, IconBot, IconClipboard, IconSun, IconEdit, IconCheck, IconAlert,
+  IconSearch, IconBook, IconBot, IconClipboard, IconSun, IconCheck, IconAlert,
   IconTrash, IconChevronLeft, IconChevronRight,
 } from './icons.jsx';
 import SetupWizard, { STATUS_KEY as WIZARD_STATUS_KEY } from './wizard/SetupWizard.jsx';
@@ -32,65 +32,9 @@ function Toast({ message, url, onDismiss }) {
   );
 }
 
-// ─── Integration edit modal ────────────────────────────────────────────────
-
-function IntegrationModal({ project, onSave, onClose }) {
-  const [refs, setRefs] = useState({
-    jira_project_key: project?.external_refs?.jira_project_key || '',
-    github_repo: project?.external_refs?.github_repo || '',
-  });
-
-  async function handleSave() {
-    const patch = {};
-    if (refs.jira_project_key || refs.github_repo) {
-      patch.external_refs = {};
-      if (refs.jira_project_key) patch.external_refs.jira_project_key = refs.jira_project_key.trim();
-      if (refs.github_repo) patch.external_refs.github_repo = refs.github_repo.trim();
-    }
-    await onSave(project.id, patch);
-    onClose();
-  }
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span className="modal-title">
-            <IconSettings /> Integrations — {project?.name}
-          </span>
-          <button className="modal-close" onClick={onClose} aria-label="Close dialog">
-            <IconX />
-          </button>
-        </div>
-        <div className="modal-body">
-          <div className="edit-label">External refs</div>
-          <label className="field-label">Jira project key</label>
-          <input
-            className="input"
-            value={refs.jira_project_key}
-            onChange={e => setRefs(r => ({ ...r, jira_project_key: e.target.value }))}
-            placeholder="e.g. KAN"
-          />
-          <label className="field-label">GitHub repo</label>
-          <input
-            className="input"
-            value={refs.github_repo}
-            onChange={e => setRefs(r => ({ ...r, github_repo: e.target.value }))}
-            placeholder="e.g. org/repo"
-          />
-          <div className="row-gap-sm mt-12">
-            <button className="btn btn-primary btn-sm" onClick={handleSave}>Save</button>
-            <button className="btn btn-secondary btn-sm" onClick={onClose}>Cancel</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── TopBar ────────────────────────────────────────────────────────────────
 
-function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditIntegrations, onboardingIncomplete, onOpenWizard, onOpenSettings }) {
+function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onboardingIncomplete, onOpenWizard, onOpenSettings }) {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
   const [showNewInput, setShowNewInput] = useState(false);
@@ -101,8 +45,6 @@ function TopBar({ projects, activeId, onSelect, onRefresh, setToast, onEditInteg
       setShowNewInput(true);
     } else if (val === '__delete__') {
       handleDelete();
-    } else if (val === '__edit__') {
-      onEditIntegrations();
     } else {
       onSelect(val);
     }
@@ -282,7 +224,6 @@ function DropZone({ busy, url, setUrl, onFile, onUrl }) {
 }
 
 function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
-  const [syncing, setSyncing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState('');
   const [searchQ, setSearchQ] = useState('');
@@ -304,19 +245,6 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
     setSearchResults([]);
     setSearchQ('');
   }, [projectId]);
-
-  async function handleSync() {
-    setSyncing(true);
-    try {
-      await api.syncProject(projectId);
-      setToast({ message: 'Sync complete.' });
-      onSourcesChange();
-    } catch (err) {
-      setToast({ message: `Sync failed: ${err.message}` });
-    } finally {
-      setSyncing(false);
-    }
-  }
 
   async function handleFile(file) {
     if (!file || busy) return;
@@ -410,12 +338,6 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
     <aside className="left-pane">
       <div className="left-scroll">
 
-        <div className="section">
-          <button className="btn btn-secondary btn-block" onClick={handleSync} disabled={syncing}>
-            {syncing ? <><IconLoader className="spin" /> Syncing…</> : <><IconRefresh /> Sync now</>}
-          </button>
-        </div>
-
         <DropZone
           busy={busy}
           url={url}
@@ -507,7 +429,7 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
 
 const CHAT_SESSION_ID = 'default';
 
-function ChatPane({ projectId, onActionDrafted }) {
+function ChatPane({ projectId }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -536,7 +458,6 @@ function ChatPane({ projectId, onActionDrafted }) {
     try {
       const res = await api.chat(projectId, CHAT_SESSION_ID, text, webSearchEnabled);
       setMessages(prev => [...prev, { role: 'assistant', content: res.reply, citations: res.citations ?? [] }]);
-      if (res.reply?.includes('Drafted action')) onActionDrafted();
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: `⚠ Error: ${err.message}` }]);
     } finally {
@@ -564,7 +485,7 @@ function ChatPane({ projectId, onActionDrafted }) {
           <div className="chat-empty-state chat-empty-inline">
             <div className="chat-empty-icon"><IconBot /></div>
             <div className="chat-empty-text">Hey! Ask me anything about this project.</div>
-            <div className="chat-empty-subtext">I can pull from your ingested docs, meeting notes, and synced Jira/GitHub items.</div>
+            <div className="chat-empty-subtext">I can pull from your ingested docs and meeting notes.</div>
           </div>
         )}
 
@@ -645,7 +566,6 @@ function ChatPane({ projectId, onActionDrafted }) {
 const STUDIO_TABS = [
   { label: 'Briefing', Icon: IconClipboard },
   { label: 'Standup', Icon: IconSun },
-  { label: 'Actions', Icon: IconEdit },
   { label: 'Decisions', Icon: IconCheck },
   { label: 'Risks', Icon: IconAlert },
   { label: 'Flashcards', Icon: IconBook },
@@ -842,7 +762,7 @@ function FlashcardItem({ card, onUpdate, onDelete }) {
   );
 }
 
-function StudioPane({ projectId, actionsKey, setToast }) {
+function StudioPane({ projectId, setToast }) {
   const [tab, setTab] = useState(() => {
     const saved = localStorage.getItem('studioTab');
     return saved !== null ? +saved : 0;
@@ -851,7 +771,6 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [standup, setStandup] = useState(null);
   const [standupLoading, setStandupLoading] = useState(false);
-  const [actions, setActions] = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [risks, setRisks] = useState([]);
   const [flashcards, setFlashcards] = useState([]);
@@ -869,12 +788,11 @@ function StudioPane({ projectId, actionsKey, setToast }) {
   }
 
   useEffect(() => {
-    if (!projectId) { setActions([]); setBriefing(null); setStandup(null); return; }
-    api.listActions(projectId, 'pending').then(setActions).catch(() => setActions([]));
-  }, [projectId, actionsKey]);
+    if (!projectId) { setBriefing(null); setStandup(null); return; }
+  }, [projectId]);
 
   useEffect(() => {
-    if (!projectId) { setDecisions([]); setActions([]); setRisks([]); setFlashcards([]); return; }
+    if (!projectId) { setDecisions([]); setRisks([]); setFlashcards([]); return; }
     api.listDecisions(projectId).then(setDecisions).catch(() => setDecisions([]));
     api.listRisks(projectId).then(setRisks).catch(() => setRisks([]));
     loadFlashcards();
@@ -986,26 +904,6 @@ function StudioPane({ projectId, actionsKey, setToast }) {
     }
   }
 
-  async function handleApprove(actionId) {
-    try {
-      const res = await api.approveAction(actionId);
-      const url = res?.result?.url;
-      setToast({ message: 'Comment posted.', url });
-      setActions(prev => prev.filter(a => a.id !== actionId));
-    } catch (err) {
-      setToast({ message: `Approve failed: ${err.message}` });
-    }
-  }
-
-  async function handleReject(actionId) {
-    try {
-      await api.rejectAction(actionId);
-      setActions(prev => prev.filter(a => a.id !== actionId));
-    } catch (err) {
-      setToast({ message: `Reject failed: ${err.message}` });
-    }
-  }
-
   if (!projectId) return <aside className="studio-pane" />;
 
   return (
@@ -1017,7 +915,6 @@ function StudioPane({ projectId, actionsKey, setToast }) {
           <button
             key={label}
             className={`studio-tab ${tab === i ? 'active' : ''}`}
-            data-testid={i === 2 ? 'studio-tab-actions' : undefined}
             onClick={() => {
               selectTab(i);
               if (i === 0 && !briefing) loadBriefing();
@@ -1026,9 +923,6 @@ function StudioPane({ projectId, actionsKey, setToast }) {
             }}
           >
             <Icon /> {label}
-            {i === 2 && actions.length > 0 && (
-              <span className="section-badge ml-4">{actions.length}</span>
-            )}
             {i === 5 && remainingDue > 0 && (
               <span className="section-badge ml-4">{remainingDue}</span>
             )}
@@ -1162,26 +1056,6 @@ function StudioPane({ projectId, actionsKey, setToast }) {
         )}
 
         {tab === 2 && (
-          <div>
-            {actions.length === 0 ? (
-              <p className="no-actions">No pending actions.</p>
-            ) : (
-              actions.map(a => (
-                <div key={a.id} className="action-card" data-testid="action-card">
-                  <div className="action-type">{a.action_type}</div>
-                  <div className="action-meta">{a.payload?.item_id || a.payload?.project_key || ''} · {a.payload?.ref_key}</div>
-                  <div className="action-body">{a.payload?.body || a.payload?.summary || ''}{a.payload?.description ? ` — ${a.payload.description}` : ''}</div>
-                  <div className="action-btns">
-                    <button className="btn-approve" onClick={() => handleApprove(a.id)} data-testid="action-approve">Approve</button>
-                    <button className="btn-reject" onClick={() => handleReject(a.id)} data-testid="action-reject">Reject</button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {tab === 3 && (
           <div className="transcript-results">
             {decisions.length === 0 ? (
               <p className="no-data">No decisions extracted yet.</p>
@@ -1196,7 +1070,7 @@ function StudioPane({ projectId, actionsKey, setToast }) {
           </div>
         )}
 
-        {tab === 4 && (
+        {tab === 3 && (
           <div className="transcript-results">
             {risks.length === 0 ? (
               <p className="no-data">No risks extracted yet.</p>
@@ -1330,9 +1204,7 @@ export default function App() {
     return localStorage.getItem('projectId') || null;
   });
   const [toast, setToast] = useState(null);
-  const [actionsKey, setActionsKey] = useState(0);
   const [sourcesKey, setSourcesKey] = useState(0);
-  const [editProject, setEditProject] = useState(null);
 
   const [showWizard, setShowWizard] = useState(() => localStorage.getItem(WIZARD_STATUS_KEY) === null);
   const [onboardingStatus, setOnboardingStatus] = useState(() => localStorage.getItem(WIZARD_STATUS_KEY));
@@ -1374,17 +1246,6 @@ export default function App() {
     localStorage.setItem('projectId', id);
   }
 
-  async function handleSaveIntegrations(id, patch) {
-    try {
-      await api.patchProject(id, patch);
-      await refreshProjects();
-    } catch (err) {
-      setToast({ message: `Save failed: ${err.message}` });
-    }
-  }
-
-  const activeProject = projects.find(p => p.id === activeId) || null;
-
   function handleLeftResizeEnd() {
     localStorage.setItem('leftPaneWidth', String(leftWidthRef.current));
     setResizingSide(null);
@@ -1403,7 +1264,6 @@ export default function App() {
         onSelect={selectProject}
         onRefresh={refreshProjects}
         setToast={setToast}
-        onEditIntegrations={() => setEditProject(activeProject)}
         onboardingIncomplete={onboardingStatus !== 'completed'}
         onOpenWizard={() => setShowWizard(true)}
         onOpenSettings={() => setShowSettings(true)}
@@ -1422,7 +1282,6 @@ export default function App() {
       />
       <ChatPane
         projectId={activeId}
-        onActionDrafted={() => setActionsKey(k => k + 1)}
       />
       <PaneResizer
         side="right"
@@ -1432,7 +1291,6 @@ export default function App() {
       />
       <StudioPane
         projectId={activeId}
-        actionsKey={actionsKey}
         setToast={setToast}
       />
 
@@ -1441,14 +1299,6 @@ export default function App() {
           message={toast.message}
           url={toast.url}
           onDismiss={() => setToast(null)}
-        />
-      )}
-
-      {editProject && (
-        <IntegrationModal
-          project={editProject}
-          onSave={handleSaveIntegrations}
-          onClose={() => setEditProject(null)}
         />
       )}
 
