@@ -22,6 +22,7 @@ import time
 
 import httpx
 
+from request_context import get_request_id
 from toolbox import ToolboxStore
 
 logger = logging.getLogger("uvicorn.error")
@@ -92,6 +93,7 @@ class MCPClient:
                 result_summary=result_summary,
                 error=error,
                 duration_ms=duration_ms,
+                request_id=get_request_id() or None,
             )
         except Exception as exc:  # noqa: BLE001 — logging must never propagate
             logger.warning("toolbox log write failed: %s", exc)

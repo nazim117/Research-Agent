@@ -386,6 +386,16 @@ class WorkflowOut(BaseModel):
     steps: list[WorkflowStepOut]
 
 
+class ToolStatsOut(BaseModel):
+    tool_name: str
+    call_count: int
+    success_count: int
+    failure_count: int
+    success_rate: float
+    avg_duration_ms: float | None
+    last_used_at: str
+
+
 class BriefActionOut(BaseModel):
     id: str
     text: str
@@ -896,6 +906,28 @@ async def delete_workflow(project_id: str, name: str):
     return {"status": "deleted"}
 
 
+@app.get("/projects/{project_id}/toolbox/stats", response_model=list[ToolStatsOut])
+async def get_toolbox_stats(project_id: str) -> list[ToolStatsOut]:
+    """Per-tool success/failure track record for this project, derived from
+    the tool_calls log (toolbox.py). Read-only visibility — the /chat route
+    also draws on this to annotate matched workflow steps.
+    """
+    await _require_project(project_id)
+    rows = await toolbox_store.get_stats(project_id)
+    return [
+        ToolStatsOut(
+            tool_name=r.tool_name,
+            call_count=r.call_count,
+            success_count=r.success_count,
+            failure_count=r.failure_count,
+            success_rate=r.success_rate,
+            avg_duration_ms=r.avg_duration_ms,
+            last_used_at=r.last_used_at,
+        )
+        for r in rows
+    ]
+
+
 def _flashcard_out(c) -> FlashcardOut:
     return FlashcardOut(
         id=c.id, source=c.source, front=c.front, back=c.back,
@@ -1253,11 +1285,19 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     # request was handled before, not something the model can execute; this
     # codebase has no LLM-driven tool-calling loop for it to invoke.
     if matched_workflow:
-        step_lines = "\n".join(
-            f"{s.step_order + 1}. {s.tool_name}({s.arguments})"
-            + (f" — {s.description}" if s.description else "")
-            for s in matched_workflow.steps
-        )
+        step_lines_list = []
+        for s in matched_workflow.steps:
+            line = f"{s.step_order + 1}. {s.tool_name}({s.arguments})"
+            if s.description:
+                line += f" — {s.description}"
+            # Annotate with the tool's real track record for this project,
+            # when there's any logged history — turns toolbox.py's write-only
+            # tool_calls log into something the prompt actually draws on.
+            stats = await toolbox_store.get_stats_for_tool(req.project_id, s.tool_name)
+            if stats and stats.call_count > 0:
+                line += f" [{stats.success_count}/{stats.call_count} succeeded]"
+            step_lines_list.append(line)
+        step_lines = "\n".join(step_lines_list)
         messages.append(
             {
                 "role": "system",

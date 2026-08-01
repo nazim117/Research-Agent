@@ -30,7 +30,7 @@ build first given that goal.
 | Knowledge base | Have | `rag.py` + Qdrant `documents` collection (docs/transcripts/synced items) |
 | Conversational (episodic) | Have | Qdrant `conversations` collection, semantic search over past chat |
 | Summaries (episodic) | Have | `briefing.py`/`standup.py` (LLM summaries), `transcript.py` (decisions/action_items/risks) |
-| Toolbox | Partial | mcp-server `registry.go` tool list — static config, not learned/adaptive; `toolbox.py` logs every tool call for observability, not yet used for learning |
+| Toolbox | Have | `toolbox.py` logs every tool call (`request_id`-tagged via `request_context.py`'s contextvar) and aggregates per-tool success/failure via `get_stats`/`get_stats_for_tool`. `GET /projects/{id}/toolbox/stats` exposes it read-only; the `/chat` KNOWN PROCEDURE block annotates each workflow step with its real track record, e.g. "web_search(...) [7/8 succeeded]" |
 | Workflow | Partial | `workflow.py` — explicitly-authored named step sequences, project-scoped, keyword-matched into the `/chat` prompt as read-only guidance. Not derived from tool-call history (no multi-step tool loop exists yet to derive from) and steps don't auto-execute (no approval layer since `actions.py` was removed) |
 
 ## What's missing
@@ -54,13 +54,12 @@ build first given that goal.
    "KNOWN PROCEDURE" guidance block — same mechanism as doc chunks/web
    results. Nothing auto-executes; there's no approval layer in this
    codebase to gate that (`actions.py` was removed in `d5038c9e`).
-2. **Toolbox** (procedural) — top priority, directly requested. Table:
-   tool name, args pattern, success/failure, `project_id`. Lets the agent
-   learn which tool sequences work for a given query shape, not just call
-   from a fixed list. `toolbox.py`'s `tool_calls` log is the raw material;
-   it currently has no `session_id`/`run_id` column, so log rows can't yet
-   be grouped into "one turn" or "one run" — needed before this can build on
-   top of workflow-derivation logic.
+2. ~~**Toolbox** (procedural)~~ — done. `tool_calls` gained a `request_id`
+   column (reusing `request_context.py`'s existing per-request contextvar as
+   the correlation key, no new plumbing through `call()`/`main.py`).
+   `ToolboxStore.get_stats()`/`get_stats_for_tool()` aggregate success rate +
+   avg duration per tool, project-scoped. Consumed in `/chat`: each
+   KNOWN PROCEDURE step gets annotated with its real track record.
 3. **Working memory (extended)** — needed as scaffolding for multi-step
    research/tool use: a scratchpad across steps within one research task,
    distinct from the existing conversation history and from finalized

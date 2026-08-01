@@ -84,6 +84,7 @@ async def test_doc_chunk_produces_project_knowledge_block():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -134,6 +135,7 @@ async def test_no_doc_chunks_no_knowledge_block():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -171,6 +173,7 @@ async def test_prior_refusals_stripped_from_recent_history():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -210,6 +213,7 @@ async def test_source_label_in_prompt():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -245,6 +249,7 @@ async def test_one_chunk_produces_citations_array():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -281,6 +286,7 @@ async def test_no_chunks_produces_empty_citations():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -322,6 +328,7 @@ async def test_two_chunks_produce_ordered_citations():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -376,6 +383,7 @@ async def test_web_search_off_by_default_never_calls_mcp():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
         mcp.call = AsyncMock(return_value=FAKE_WEB_RESULTS)
@@ -414,6 +422,7 @@ async def test_web_search_on_injects_results_and_citations():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
         mcp.call = AsyncMock(return_value=FAKE_WEB_RESULTS)
@@ -469,6 +478,7 @@ async def test_web_search_failure_degrades_gracefully():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
         mcp.call = AsyncMock(side_effect=MCPError("search backend unreachable"))
@@ -490,3 +500,109 @@ async def test_web_search_failure_degrades_gracefully():
     )
     assert error_block is not None
     assert "search backend unreachable" in error_block["content"]
+
+
+# ---------------------------------------------------------------------------
+# Workflow + toolbox-stats annotation tests
+# ---------------------------------------------------------------------------
+
+def _make_matched_workflow():
+    from workflow import Workflow, WorkflowStep
+    step = WorkflowStep(
+        id="step-1", workflow_id="wf-1", step_order=0,
+        tool_name="web_search", arguments='{"query": "PM status"}',
+        description="search for status", created_at="x",
+    )
+    return Workflow(
+        id="wf-1", project_id=FAKE_PROJECT_ID, name="weekly-briefing",
+        trigger="briefing", description=None, created_at="x", steps=[step],
+    )
+
+
+@pytest.mark.asyncio
+async def test_matched_workflow_annotated_with_success_rate():
+    """A matched workflow step gets a '[n/m succeeded]' suffix when toolbox
+    has logged history for that tool.
+    """
+    from toolbox import ToolStats
+
+    captured_messages = []
+
+    async def _spy_chat(messages):
+        captured_messages.extend(messages)
+        return "Here's the briefing."
+
+    stats = ToolStats(
+        tool_name="web_search", call_count=8, success_count=7, failure_count=1,
+        success_rate=0.875, avg_duration_ms=120.0, last_used_at="x",
+    )
+
+    with (
+        patch("main.embed", side_effect=_fake_embed),
+        patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
+        patch("main.chat", side_effect=_spy_chat),
+        patch("main.store.history", new_callable=AsyncMock, return_value=[]),
+        patch("main.store.append", new_callable=AsyncMock),
+        patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
+        patch("main.vstore.upsert", new_callable=AsyncMock),
+        patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=_make_matched_workflow()),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=stats),
+    ):
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/chat", json={
+                "project_id": FAKE_PROJECT_ID,
+                "session_id": FAKE_SESSION_ID,
+                "message": "send me the weekly briefing",
+            })
+
+    assert resp.status_code == 200
+    procedure_block = next(
+        (m for m in captured_messages if "KNOWN PROCEDURE" in m.get("content", "")),
+        None,
+    )
+    assert procedure_block is not None
+    assert "[7/8 succeeded]" in procedure_block["content"]
+
+
+@pytest.mark.asyncio
+async def test_matched_workflow_no_annotation_without_stats():
+    """No logged history for the tool → no success-rate suffix, just the
+    plain step line (unchanged format)."""
+    captured_messages = []
+
+    async def _spy_chat(messages):
+        captured_messages.extend(messages)
+        return "Here's the briefing."
+
+    with (
+        patch("main.embed", side_effect=_fake_embed),
+        patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
+        patch("main.chat", side_effect=_spy_chat),
+        patch("main.store.history", new_callable=AsyncMock, return_value=[]),
+        patch("main.store.append", new_callable=AsyncMock),
+        patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
+        patch("main.vstore.upsert", new_callable=AsyncMock),
+        patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=_make_matched_workflow()),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
+    ):
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/chat", json={
+                "project_id": FAKE_PROJECT_ID,
+                "session_id": FAKE_SESSION_ID,
+                "message": "send me the weekly briefing",
+            })
+
+    assert resp.status_code == 200
+    procedure_block = next(
+        (m for m in captured_messages if "KNOWN PROCEDURE" in m.get("content", "")),
+        None,
+    )
+    assert procedure_block is not None
+    assert "succeeded]" not in procedure_block["content"]
+    assert "web_search" in procedure_block["content"]

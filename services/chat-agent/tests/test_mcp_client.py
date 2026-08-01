@@ -18,6 +18,7 @@ import httpx
 import pytest
 
 from mcp_client import MCPClient, MCPError
+from request_context import set_request_id
 from toolbox import ToolboxStore
 
 # ---------------------------------------------------------------------------
@@ -155,6 +156,36 @@ async def test_call_failure_logs_to_toolbox(tmp_path):
     assert rows[0].success is False
     assert rows[0].error is not None
     assert rows[0].result_summary is None
+
+
+async def test_call_logs_current_request_id(tmp_path):
+    """_log_call picks up request_context's contextvar when set."""
+    toolbox = ToolboxStore(str(tmp_path / "test.db"))
+    await toolbox.init()
+    client = MCPClient(
+        transport=_StaticTransport(_ok_response({"ok": True})),
+        toolbox=toolbox,
+    )
+    set_request_id("req-xyz")
+    await client.call("web_search", {"query": "x"}, project_id="proj-1")
+
+    rows = await toolbox.list_by_project("proj-1")
+    assert rows[0].request_id == "req-xyz"
+
+
+async def test_call_without_request_id_logs_none(tmp_path):
+    """No request_id bound (contextvar default "") → stored as None, not ''."""
+    toolbox = ToolboxStore(str(tmp_path / "test.db"))
+    await toolbox.init()
+    client = MCPClient(
+        transport=_StaticTransport(_ok_response({"ok": True})),
+        toolbox=toolbox,
+    )
+    set_request_id("")
+    await client.call("web_search", {"query": "x"}, project_id="proj-1")
+
+    rows = await toolbox.list_by_project("proj-1")
+    assert rows[0].request_id is None
 
 
 async def test_call_without_toolbox_does_not_raise():
