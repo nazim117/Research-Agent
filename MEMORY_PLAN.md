@@ -30,26 +30,37 @@ build first given that goal.
 | Knowledge base | Have | `rag.py` + Qdrant `documents` collection (docs/transcripts/synced items) |
 | Conversational (episodic) | Have | Qdrant `conversations` collection, semantic search over past chat |
 | Summaries (episodic) | Have | `briefing.py`/`standup.py` (LLM summaries), `transcript.py` (decisions/action_items/risks) |
-| Toolbox | Partial | mcp-server `registry.go` tool list — static config, not learned/adaptive |
+| Toolbox | Partial | mcp-server `registry.go` tool list — static config, not learned/adaptive; `toolbox.py` logs every tool call for observability, not yet used for learning |
+| Workflow | Partial | `workflow.py` — explicitly-authored named step sequences, project-scoped, keyword-matched into the `/chat` prompt as read-only guidance. Not derived from tool-call history (no multi-step tool loop exists yet to derive from) and steps don't auto-execute (no approval layer since `actions.py` was removed) |
 
 ## What's missing
 
 - **Semantic cache** — no caching of repeated/near-identical embedding or LLM calls.
 - **Entity memory** — no structured per-entity (person/stakeholder/ticket) store; only document chunks.
 - **Persona** — no user/agent persona or preference state stored.
-- **Workflow** — no stored "steps taken to do X" for reuse/replay.
-- **Toolbox (real version)** — current tool list is static; no memory of which tool worked, in what context, with what result.
+- **Toolbox (real/learned version)** — `toolbox.py` logs calls, but nothing
+  yet reads that log to learn which tool sequences work for a given query
+  shape.
 
 ## Priority given the stated goal (deep research + tool usage + workflows)
 
-1. **Workflow** (procedural) — top priority, directly requested. New table:
-   steps, tool calls per step, `project_id`, trigger condition. Lets the
-   agent replay/adapt known procedures (e.g. "weekly PM briefing") instead of
-   re-deriving them each time.
+1. ~~**Workflow** (procedural)~~ — done. `workflow.py`: `workflows` +
+   `workflow_steps` tables, `project_id`-scoped, explicit creation via
+   `POST /projects/{id}/workflows` (steps aren't derived from tool-call
+   history — the `/chat` flow only ever makes one tool call per turn today,
+   so there's nothing to auto-derive from). `find_matching()` does
+   keyword-substring matching against a workflow's `trigger` field and, on a
+   hit, folds the stored steps into the `/chat` prompt as a read-only
+   "KNOWN PROCEDURE" guidance block — same mechanism as doc chunks/web
+   results. Nothing auto-executes; there's no approval layer in this
+   codebase to gate that (`actions.py` was removed in `d5038c9e`).
 2. **Toolbox** (procedural) — top priority, directly requested. Table:
    tool name, args pattern, success/failure, `project_id`. Lets the agent
    learn which tool sequences work for a given query shape, not just call
-   from a fixed list.
+   from a fixed list. `toolbox.py`'s `tool_calls` log is the raw material;
+   it currently has no `session_id`/`run_id` column, so log rows can't yet
+   be grouped into "one turn" or "one run" — needed before this can build on
+   top of workflow-derivation logic.
 3. **Working memory (extended)** — needed as scaffolding for multi-step
    research/tool use: a scratchpad across steps within one research task,
    distinct from the existing conversation history and from finalized

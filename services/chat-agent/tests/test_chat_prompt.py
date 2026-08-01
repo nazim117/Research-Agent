@@ -83,6 +83,7 @@ async def test_doc_chunk_produces_project_knowledge_block():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -132,6 +133,7 @@ async def test_no_doc_chunks_no_knowledge_block():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -168,6 +170,7 @@ async def test_prior_refusals_stripped_from_recent_history():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -206,6 +209,7 @@ async def test_source_label_in_prompt():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -240,6 +244,7 @@ async def test_one_chunk_produces_citations_array():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -275,6 +280,7 @@ async def test_no_chunks_produces_empty_citations():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -315,6 +321,7 @@ async def test_two_chunks_produce_ordered_citations():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -368,6 +375,7 @@ async def test_web_search_off_by_default_never_calls_mcp():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
         mcp.call = AsyncMock(return_value=FAKE_WEB_RESULTS)
@@ -405,6 +413,7 @@ async def test_web_search_on_injects_results_and_citations():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
         mcp.call = AsyncMock(return_value=FAKE_WEB_RESULTS)
@@ -459,6 +468,7 @@ async def test_web_search_failure_degrades_gracefully():
         patch("main.vstore.upsert", new_callable=AsyncMock),
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
         mcp.call = AsyncMock(side_effect=MCPError("search backend unreachable"))

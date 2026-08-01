@@ -20,6 +20,7 @@
 #   rag.py        — chunk + ingest documents; retrieve relevant chunks (per project)
 #   llm.py        — send a message list to the configured LLM backend, get a reply
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -64,6 +65,7 @@ from transcript import (
     extract_structured,
 )
 from vectors import VectorStore
+from workflow import WorkflowStore
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -74,6 +76,7 @@ transcript_store = TranscriptStore(settings.sqlite_path)
 document_state_store = DocumentStateStore(settings.sqlite_path)
 flashcard_store = FlashcardStore(settings.sqlite_path)
 toolbox_store = ToolboxStore(settings.sqlite_path)
+workflow_store = WorkflowStore(settings.sqlite_path)
 
 # Shared MCPClient — the gateway to mcp-server's tools (web search, etc.).
 # Credentials (e.g. BRAVE_SEARCH_API_KEY) live on the mcp-server; this
@@ -155,6 +158,7 @@ async def lifespan(app: FastAPI):
     await document_state_store.init()
     await flashcard_store.init()
     await toolbox_store.init()
+    await workflow_store.init()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -352,6 +356,34 @@ class FlashcardReviewRequest(BaseModel):
 class FlashcardUpdateRequest(BaseModel):
     front: str = Field(..., min_length=1)
     back: str = Field(..., min_length=1)
+
+
+class WorkflowStepIn(BaseModel):
+    tool_name: str = Field(..., min_length=1)
+    arguments: dict = Field(default_factory=dict)
+    description: str | None = None
+
+
+class WorkflowCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    trigger: str = Field(..., min_length=1, description="Comma-separated keywords/phrases")
+    description: str | None = None
+    steps: list[WorkflowStepIn] = Field(..., min_length=1)
+
+
+class WorkflowStepOut(BaseModel):
+    step_order: int
+    tool_name: str
+    arguments: dict
+    description: str | None
+
+
+class WorkflowOut(BaseModel):
+    name: str
+    trigger: str
+    description: str | None
+    created_at: str
+    steps: list[WorkflowStepOut]
 
 
 class BriefActionOut(BaseModel):
@@ -599,6 +631,7 @@ async def delete_project(project_id: str):
     Cascade:
       - SQLite:  projects row + messages rows   (ProjectStore.delete)
       - Qdrant:  conversations + documents points tagged with project_id
+      - SQLite:  transcript/document_state/flashcards/toolbox/workflow rows
     """
     # Do the vector deletes first.  If ProjectStore.delete() succeeded but the
     # Qdrant delete failed, we'd be left with orphan vectors filtered on a
@@ -611,6 +644,7 @@ async def delete_project(project_id: str):
     await document_state_store.delete_by_project(project_id)
     await flashcard_store.delete_by_project(project_id)
     await toolbox_store.delete_by_project(project_id)
+    await workflow_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -808,6 +842,58 @@ async def get_risks(project_id: str) -> list[RiskOut]:
         RiskOut(id=r.id, source=r.source, text=r.text, created_at=r.created_at)
         for r in rows
     ]
+
+
+def _workflow_out(w) -> WorkflowOut:
+    return WorkflowOut(
+        name=w.name,
+        trigger=w.trigger,
+        description=w.description,
+        created_at=w.created_at,
+        steps=[
+            WorkflowStepOut(
+                step_order=s.step_order,
+                tool_name=s.tool_name,
+                arguments=json.loads(s.arguments),
+                description=s.description,
+            )
+            for s in w.steps
+        ],
+    )
+
+
+@app.post("/projects/{project_id}/workflows", response_model=WorkflowOut)
+async def save_workflow(project_id: str, req: WorkflowCreateRequest) -> WorkflowOut:
+    """Create or replace a stored workflow by name.
+
+    Explicit, hand-authored procedure storage — steps aren't derived from
+    live tool-call history (see workflow.py header). Re-saving the same name
+    replaces its steps rather than duplicating them.
+    """
+    await _require_project(project_id)
+    workflow = await workflow_store.save_workflow(
+        project_id,
+        req.name,
+        req.trigger,
+        [s.model_dump() for s in req.steps],
+        description=req.description,
+    )
+    return _workflow_out(workflow)
+
+
+@app.get("/projects/{project_id}/workflows", response_model=list[WorkflowOut])
+async def list_workflows(project_id: str) -> list[WorkflowOut]:
+    """List all stored workflows for a project, newest first."""
+    await _require_project(project_id)
+    rows = await workflow_store.list_by_project(project_id)
+    return [_workflow_out(w) for w in rows]
+
+
+@app.delete("/projects/{project_id}/workflows/{name}")
+async def delete_workflow(project_id: str, name: str):
+    await _require_project(project_id)
+    await workflow_store.delete_by_name(project_id, name)
+    return {"status": "deleted"}
 
 
 def _flashcard_out(c) -> FlashcardOut:
@@ -1046,6 +1132,11 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
         [(c.source, c.chunk_index) for c in doc_chunks],
     )
 
+    # 3c. Look up a stored workflow whose trigger keywords match this
+    # message — read-only guidance, nothing executes automatically (see
+    # workflow.py header / MEMORY_PLAN.md).
+    matched_workflow = await workflow_store.find_matching(req.project_id, req.message)
+
     # 4. Store the user message vector in Qdrant conversations.
     await vstore.upsert(
         settings.qdrant_collection,
@@ -1153,6 +1244,32 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
                     "--- PROJECT KNOWLEDGE ---\n"
                     f"{doc_lines}\n"
                     "--- END PROJECT KNOWLEDGE ---"
+                ),
+            }
+        )
+
+    # Inject a matched workflow, if one's trigger keywords hit this message.
+    # This is reference guidance only — a description of how this kind of
+    # request was handled before, not something the model can execute; this
+    # codebase has no LLM-driven tool-calling loop for it to invoke.
+    if matched_workflow:
+        step_lines = "\n".join(
+            f"{s.step_order + 1}. {s.tool_name}({s.arguments})"
+            + (f" — {s.description}" if s.description else "")
+            for s in matched_workflow.steps
+        )
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The user has a stored procedure that may be relevant to this "
+                    "request, based on similar past requests. This is reference "
+                    "guidance for how this kind of task was handled before — "
+                    "describe or follow the approach in your reply, but you cannot "
+                    "execute these tool calls yourself.\n\n"
+                    f"--- KNOWN PROCEDURE: {matched_workflow.name} ---\n"
+                    f"{step_lines}\n"
+                    "--- END KNOWN PROCEDURE ---"
                 ),
             }
         )
