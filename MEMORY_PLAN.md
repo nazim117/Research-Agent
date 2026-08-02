@@ -60,10 +60,22 @@ build first given that goal.
    `ToolboxStore.get_stats()`/`get_stats_for_tool()` aggregate success rate +
    avg duration per tool, project-scoped. Consumed in `/chat`: each
    KNOWN PROCEDURE step gets annotated with its real track record.
-3. **Working memory (extended)** — needed as scaffolding for multi-step
-   research/tool use: a scratchpad across steps within one research task,
-   distinct from the existing conversation history and from finalized
-   RAG-ingested content.
+3. ~~**Working memory (extended)**~~ — done, paired with a real writer for
+   it. `scratchpad.py`: `scratchpad_entries` table, `project_id`+`session_id`
+   scoped, upsert-by-key. `deep_research.py`: opt-in (`ChatRequest.
+   deep_research=True`) multi-step tool-calling loop for `/chat` — the model
+   requests a tool via a `<<TOOL_CALL>>{...}<<END>>` text marker (llm.py has
+   no native function-calling), restricted to read-only tools only
+   (`web_search`, `web_fetch`, `file_read`, `file_list`, `memory_get`,
+   `memory_list` — no approval gate exists in this codebase since
+   `actions.py` was removed in `d5038c9e`, so write tools stay off-limits to
+   the autonomous loop). Guarded against runaway loops by a hard step cap
+   (`settings.deep_research_max_steps`, default 5) and a repeat-call guard
+   (same `(tool, args)` pair twice forces one final non-tool-calling answer
+   instead of continuing). Every step is written to the scratchpad; it's
+   loop-only working memory for this pass — cleared at the start of each
+   research task, not surfaced into later plain chat turns, inspectable via
+   `GET /projects/{id}/scratchpad?session_id=...`.
 4. **Semantic cache** — high leverage for deep research: multi-step research
    reissues similar sub-queries; caching by normalized query hash cuts cost
    and latency.

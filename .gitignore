@@ -63,3 +63,5 @@ secrets/
 docs/
 
 **/__pycache__/
+
+tickets/

@@ -43,6 +43,7 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
 import briefing
+import deep_research
 import env_config
 import rag
 import standup
@@ -59,6 +60,7 @@ from memory import ConversationStore
 from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
 from request_context import new_request_id, set_request_id
+from scratchpad import ScratchpadStore
 from toolbox import ToolboxStore
 from transcript import (
     TranscriptStore,
@@ -77,6 +79,7 @@ document_state_store = DocumentStateStore(settings.sqlite_path)
 flashcard_store = FlashcardStore(settings.sqlite_path)
 toolbox_store = ToolboxStore(settings.sqlite_path)
 workflow_store = WorkflowStore(settings.sqlite_path)
+scratchpad_store = ScratchpadStore(settings.sqlite_path)
 
 # Shared MCPClient — the gateway to mcp-server's tools (web search, etc.).
 # Credentials (e.g. BRAVE_SEARCH_API_KEY) live on the mcp-server; this
@@ -159,6 +162,7 @@ async def lifespan(app: FastAPI):
     await flashcard_store.init()
     await toolbox_store.init()
     await workflow_store.init()
+    await scratchpad_store.init()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -271,6 +275,10 @@ class ChatRequest(BaseModel):
     session_id: str  # Identifies which conversation inside the project.
     message: str  # The user's input text.
     web_search: bool = False  # User-triggered — the LLM never decides this itself.
+    deep_research: bool = False  # User-triggered — opts into the multi-step
+    # tool-calling research loop for this turn (see deep_research.py). The
+    # user decides whether to start it; the model decides whether/when to
+    # stop once started.
 
 
 class Citation(BaseModel):
@@ -394,6 +402,13 @@ class ToolStatsOut(BaseModel):
     success_rate: float
     avg_duration_ms: float | None
     last_used_at: str
+
+
+class ScratchpadEntryOut(BaseModel):
+    key: str
+    value: str
+    created_at: str
+    updated_at: str
 
 
 class BriefActionOut(BaseModel):
@@ -641,7 +656,7 @@ async def delete_project(project_id: str):
     Cascade:
       - SQLite:  projects row + messages rows   (ProjectStore.delete)
       - Qdrant:  conversations + documents points tagged with project_id
-      - SQLite:  transcript/document_state/flashcards/toolbox/workflow rows
+      - SQLite:  transcript/document_state/flashcards/toolbox/workflow/scratchpad rows
     """
     # Do the vector deletes first.  If ProjectStore.delete() succeeded but the
     # Qdrant delete failed, we'd be left with orphan vectors filtered on a
@@ -655,6 +670,7 @@ async def delete_project(project_id: str):
     await flashcard_store.delete_by_project(project_id)
     await toolbox_store.delete_by_project(project_id)
     await workflow_store.delete_by_project(project_id)
+    await scratchpad_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -923,6 +939,26 @@ async def get_toolbox_stats(project_id: str) -> list[ToolStatsOut]:
             success_rate=r.success_rate,
             avg_duration_ms=r.avg_duration_ms,
             last_used_at=r.last_used_at,
+        )
+        for r in rows
+    ]
+
+
+@app.get("/projects/{project_id}/scratchpad", response_model=list[ScratchpadEntryOut])
+async def get_scratchpad(
+    project_id: str,
+    session_id: str = Query(..., description="Which conversation's scratchpad to read."),
+) -> list[ScratchpadEntryOut]:
+    """Read-only inspection of the deep-research scratchpad for a session.
+
+    Debuggability only — no create/update route, since only the loop itself
+    (deep_research.py) writes entries.
+    """
+    await _require_project(project_id)
+    rows = await scratchpad_store.list_by_session(project_id, session_id)
+    return [
+        ScratchpadEntryOut(
+            key=r.key, value=r.value, created_at=r.created_at, updated_at=r.updated_at
         )
         for r in rows
     ]
@@ -1374,8 +1410,30 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     )
     logger.debug("LLM full messages: %s", messages)
 
-    # 6. Call the LLM (backend and model fixed by deploy-time config).
-    reply = await chat(messages)
+    # 6. Call the LLM — either a single plain call, or the opt-in multi-step
+    # tool-calling research loop (see deep_research.py). Backend and model
+    # are fixed by deploy-time config either way.
+    if req.deep_research:
+        # Fresh scratchpad per research task-invocation (see scratchpad.py
+        # header) — clear before this task's steps get written.
+        await scratchpad_store.clear_session(req.project_id, req.session_id)
+        research_result = await deep_research.run_research_loop(
+            messages,
+            project_id=req.project_id,
+            session_id=req.session_id,
+            mcp=_mcp,
+            scratchpad=scratchpad_store,
+            chat_fn=chat,
+        )
+        reply = research_result.reply
+        logger.info(
+            "Deep research[%s/%s]: %d steps taken",
+            req.project_id,
+            req.session_id,
+            len(research_result.steps),
+        )
+    else:
+        reply = await chat(messages)
 
     # 7. Persist the assistant reply to SQLite.
     await store.append(req.project_id, req.session_id, "assistant", reply)

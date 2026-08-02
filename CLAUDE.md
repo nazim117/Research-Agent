@@ -199,6 +199,16 @@ independent OTEL tracing setup (`internal/observability/`) — this is separate
 from and unrelated to chat-agent, which has no tracing/metrics
 instrumentation.
 
+## Decision ticketing
+
+`tickets/` holds one `.md` file per feature decision, named
+`TICKET-<numeric-id>.md` (zero-padded to 4 digits, e.g. `TICKET-0001.md`).
+Each ticket records context, decision, alternatives considered, and status
+(`proposed` / `accepted` / `superseded by TICKET-<id>`) — see
+`tickets/TICKET-0001.md` for the template. When a feature involves a
+non-obvious decision, add a ticket so future sessions have the reasoning
+without re-deriving it from code or git history.
+
 ## Known implementation gaps
 
 - `briefing.py` does a best-effort RAG lookup against a `VectorStore`

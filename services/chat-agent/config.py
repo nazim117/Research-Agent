@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     mcp_base_url: str = "http://localhost:8083"
     mcp_timeout_s: float = 30.0
 
+    # Deep-research loop — hard cap on tool-calling iterations per /chat
+    # request when ChatRequest.deep_research=True (see deep_research.py).
+    # Guards against a model that never stops requesting tools; hitting this
+    # cap forces one final non-tool-calling answer instead of looping forever.
+    deep_research_max_steps: int = 5
+
     # Check the repo-root .env first, then a local .env next to this file.
     # pydantic-settings reads them left-to-right; later files override earlier ones.
     # Missing files are silently skipped — env vars set in the shell always win.
