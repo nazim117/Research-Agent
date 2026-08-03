@@ -76,9 +76,20 @@ build first given that goal.
    loop-only working memory for this pass — cleared at the start of each
    research task, not surfaced into later plain chat turns, inspectable via
    `GET /projects/{id}/scratchpad?session_id=...`.
-4. **Semantic cache** — high leverage for deep research: multi-step research
-   reissues similar sub-queries; caching by normalized query hash cuts cost
-   and latency.
+4. ~~**Semantic cache**~~ — done, scoped to `embed()` only (not `llm.chat()`
+   replies — reply content depends on the full assembled prompt, which
+   varies turn to turn, so "similar query" isn't a safe cache key without a
+   real similarity threshold and staleness policy; deferred).
+   `semantic_cache.py`: `SemanticCacheStore` (`embedding_cache` table,
+   `UNIQUE(project_id, text_hash)`) + `embed_cached()` orchestration
+   (cache-miss calls the real `embed()`, then stores the result). Cache key
+   is `sha256(text.strip())` — exact match only, no fuzzy/similarity lookup
+   (embedding a query to check the embedding cache would be circular).
+   Wired into `main.py`'s three `embed()` call sites and `rag.py`'s
+   `retrieve()` (`cache` param). Concrete win: `/chat` was embedding
+   `req.message` twice per turn (once directly, once inside
+   `rag.retrieve()`) — now the second call is a guaranteed cache hit, no
+   call-site refactor needed. See TICKET-0003.
 5. **Entity memory** — supports deep research: structured tracking of
    research subjects/sources across a session so findings tie back to
    consistent entities instead of scattered citations.

@@ -15,17 +15,17 @@ FAKE_SESSION_ID = "sess-test-5678"
 FAKE_EMBED_VEC = [0.0] * 768
 
 
-async def _fake_embed(_text: str) -> list[float]:
+async def _fake_embed_cached(_cache, _project_id, _text: str) -> list[float]:
     return FAKE_EMBED_VEC
 
 
-async def _fake_retrieve_empty(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None):
+async def _fake_retrieve_empty(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None, cache=None):
     return []
 
 
 def _common_patches():
     return [
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
         patch("main.store.append", new_callable=AsyncMock),

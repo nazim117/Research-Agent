@@ -49,7 +49,6 @@ import rag
 import standup
 from config import settings
 from document_state import DocumentStateStore
-from embeddings import embed
 from embeddings import get_model_info as get_embeddings_model_info
 from extractors import extract_file, extract_url
 from flashcards import FlashcardStore, generate_candidates, schedule_review
@@ -61,6 +60,7 @@ from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
 from request_context import new_request_id, set_request_id
 from scratchpad import ScratchpadStore
+from semantic_cache import SemanticCacheStore, embed_cached
 from toolbox import ToolboxStore
 from transcript import (
     TranscriptStore,
@@ -80,6 +80,7 @@ flashcard_store = FlashcardStore(settings.sqlite_path)
 toolbox_store = ToolboxStore(settings.sqlite_path)
 workflow_store = WorkflowStore(settings.sqlite_path)
 scratchpad_store = ScratchpadStore(settings.sqlite_path)
+semantic_cache_store = SemanticCacheStore(settings.sqlite_path)
 
 # Shared MCPClient — the gateway to mcp-server's tools (web search, etc.).
 # Credentials (e.g. BRAVE_SEARCH_API_KEY) live on the mcp-server; this
@@ -163,6 +164,7 @@ async def lifespan(app: FastAPI):
     await toolbox_store.init()
     await workflow_store.init()
     await scratchpad_store.init()
+    await semantic_cache_store.init()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -402,6 +404,11 @@ class ToolStatsOut(BaseModel):
     success_rate: float
     avg_duration_ms: float | None
     last_used_at: str
+
+
+class CacheStatsOut(BaseModel):
+    entry_count: int
+    total_hits: int
 
 
 class ScratchpadEntryOut(BaseModel):
@@ -671,6 +678,7 @@ async def delete_project(project_id: str):
     await toolbox_store.delete_by_project(project_id)
     await workflow_store.delete_by_project(project_id)
     await scratchpad_store.delete_by_project(project_id)
+    await semantic_cache_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -944,6 +952,17 @@ async def get_toolbox_stats(project_id: str) -> list[ToolStatsOut]:
     ]
 
 
+@app.get("/projects/{project_id}/cache/stats", response_model=CacheStatsOut)
+async def get_cache_stats(project_id: str) -> CacheStatsOut:
+    """Embedding-cache entry count + cumulative hit count for this project,
+    derived from the embedding_cache table (semantic_cache.py). Read-only
+    visibility into whether the cache is actually absorbing repeated embeds.
+    """
+    await _require_project(project_id)
+    stats = await semantic_cache_store.get_stats(project_id)
+    return CacheStatsOut(entry_count=stats.entry_count, total_hits=stats.total_hits)
+
+
 @app.get("/projects/{project_id}/scratchpad", response_model=list[ScratchpadEntryOut])
 async def get_scratchpad(
     project_id: str,
@@ -1174,7 +1193,7 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
 
     # 3. Embed + search conversations collection for similar past messages,
     #    filtered to this project only.
-    query_vec = await embed(req.message)
+    query_vec = await embed_cached(semantic_cache_store, req.project_id, req.message)
     hits = await vstore.search(
         settings.qdrant_collection,
         project_id=req.project_id,
@@ -1190,6 +1209,7 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
         req.project_id, req.message, k=3, vstore=vstore,
         score_threshold=settings.rag_score_threshold,
         exclude_sources=_disabled_sources,
+        cache=semantic_cache_store,
     )
 
     logger.info(
@@ -1439,7 +1459,7 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     await store.append(req.project_id, req.session_id, "assistant", reply)
 
     # 8. Store the assistant reply vector in Qdrant conversations.
-    reply_vec = await embed(reply)
+    reply_vec = await embed_cached(semantic_cache_store, req.project_id, reply)
     await vstore.upsert(
         settings.qdrant_collection,
         project_id=req.project_id,
@@ -1486,7 +1506,7 @@ async def memory_search(
     """
     await _require_project(project_id)
 
-    vec = await embed(q)
+    vec = await embed_cached(semantic_cache_store, project_id, q)
     hits = await vstore.search(
         settings.qdrant_collection,
         project_id=project_id,

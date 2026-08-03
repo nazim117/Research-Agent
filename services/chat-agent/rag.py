@@ -35,6 +35,7 @@ from dataclasses import dataclass
 
 from config import settings
 from embeddings import embed
+from semantic_cache import SemanticCacheStore, embed_cached
 from vectors import VectorStore
 
 logger = logging.getLogger("uvicorn.error")
@@ -196,6 +197,7 @@ async def retrieve(
     vstore: VectorStore,
     score_threshold: float | None = None,
     exclude_sources: set[str] | None = None,
+    cache: SemanticCacheStore | None = None,
 ) -> list[Chunk]:
     """Find the k document chunks most semantically similar to `query`,
     restricted to one project.
@@ -210,11 +212,16 @@ async def retrieve(
                           returned.  None (default) means no cutoff.
         exclude_sources: Source labels to omit from results — used to keep
                           documents a user has disabled out of chat answers.
+        cache:           Optional embedding cache (semantic_cache.py). When
+                          given, the query embed goes through it — this is
+                          what turns main.py's /chat handler's separate
+                          conversation-memory embed of the same message into
+                          a cache hit here. None (default) skips the cache.
 
     Returns:
         List of Chunk objects ordered by score descending (most relevant first).
     """
-    query_vec = await embed(query)
+    query_vec = await embed_cached(cache, project_id, query) if cache else await embed(query)
     hits = await vstore.search(
         collection=settings.qdrant_docs_collection,
         project_id=project_id,

@@ -48,15 +48,15 @@ def _make_chunk(source: str = "source:DOC-1", text: str = "Fix login bug — Sta
 # Helpers — the fake implementations injected via patch
 # ---------------------------------------------------------------------------
 
-async def _fake_embed(_text: str) -> list[float]:
+async def _fake_embed_cached(_cache, _project_id, _text: str) -> list[float]:
     return FAKE_EMBED_VEC
 
 
-async def _fake_retrieve(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None):
+async def _fake_retrieve(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None, cache=None):
     return [_make_chunk()]
 
 
-async def _fake_retrieve_empty(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None):
+async def _fake_retrieve_empty(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None, cache=None):
     return []
 
 
@@ -74,7 +74,7 @@ async def test_doc_chunk_produces_project_knowledge_block():
         return "Here is what I found: [source:DOC-1]"
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -125,7 +125,7 @@ async def test_no_doc_chunks_no_knowledge_block():
         return "I don't have that information."
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -163,7 +163,7 @@ async def test_prior_refusals_stripped_from_recent_history():
         return "KAN-1 is In Progress. [source:DOC-1]"
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[good_turn, refusal_turn]),
@@ -203,7 +203,7 @@ async def test_source_label_in_prompt():
         return "DOC-1 covers that. [source:DOC-1]"
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -239,7 +239,7 @@ async def test_one_chunk_produces_citations_array():
         return "KAN-1 is in progress [1]."
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -276,7 +276,7 @@ async def test_no_chunks_produces_empty_citations():
         return "I don't have that information."
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -308,7 +308,7 @@ async def test_two_chunks_produce_ordered_citations():
     chunk_a = Chunk(score=0.9, source="source:DOC-1", chunk_index=0, text="First chunk content")
     chunk_b = Chunk(score=0.8, source="notes.md", chunk_index=2, text="Second chunk content")
 
-    async def _retrieve_two(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None):
+    async def _retrieve_two(_project_id, _query, k, vstore, score_threshold=None, exclude_sources=None, cache=None):
         return [chunk_a, chunk_b]
 
     captured_messages = []
@@ -318,7 +318,7 @@ async def test_two_chunks_produce_ordered_citations():
         return "Answer draws on [1] and [2]."
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_retrieve_two),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -373,7 +373,7 @@ async def test_web_search_off_by_default_never_calls_mcp():
         return "answer"
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -412,7 +412,7 @@ async def test_web_search_on_injects_results_and_citations():
         return "Here's what I found [1]."
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -468,7 +468,7 @@ async def test_web_search_failure_degrades_gracefully():
         return "I couldn't search, but here's what I know."
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -538,7 +538,7 @@ async def test_matched_workflow_annotated_with_success_rate():
     )
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),
@@ -578,7 +578,7 @@ async def test_matched_workflow_no_annotation_without_stats():
         return "Here's the briefing."
 
     with (
-        patch("main.embed", side_effect=_fake_embed),
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
         patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
         patch("main.chat", side_effect=_spy_chat),
         patch("main.store.history", new_callable=AsyncMock, return_value=[]),

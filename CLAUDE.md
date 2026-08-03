@@ -209,6 +209,10 @@ Each ticket records context, decision, alternatives considered, and status
 non-obvious decision, add a ticket so future sessions have the reasoning
 without re-deriving it from code or git history.
 
+`tickets/` is gitignored — tickets are local-only working notes for this
+checkout, not committed/shared via git. They still persist across sessions
+on this machine; they just don't travel with the repo to other clones.
+
 ## Known implementation gaps
 
 - `briefing.py` does a best-effort RAG lookup against a `VectorStore`
