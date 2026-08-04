@@ -34,6 +34,7 @@ def _common_patches():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ]
 

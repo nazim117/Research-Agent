@@ -90,9 +90,29 @@ build first given that goal.
    `req.message` twice per turn (once directly, once inside
    `rag.retrieve()`) — now the second call is a guaranteed cache hit, no
    call-site refactor needed. See TICKET-0003.
-5. **Entity memory** — supports deep research: structured tracking of
-   research subjects/sources across a session so findings tie back to
-   consistent entities instead of scattered citations.
+5. ~~**Entity memory**~~ — done. `entity.py`: `entities` table
+   (`project_id`, `name`, `type`, `attributes`, `sources` (JSON list),
+   `created_at`, `updated_at`), unique on `(project_id, name, type)`.
+   `EntityStore.upsert_entity()` merges on repeat sightings — unions the new
+   `source` into `sources`, overwrites `attributes` only when the new text
+   is non-empty (last-write-wins prose) — one consistent row per entity
+   instead of a scattered per-source log. Extraction (`extract_entities()`)
+   is a standalone LLM call independent of `transcript.py`'s
+   decisions/action_items/risks extraction, since entities come from both
+   transcripts *and* plain documents while those three only ever come from
+   transcripts; wired into all four ingest paths (`POST /ingest`,
+   `/ingest/transcript`, `/ingest/file`, `/ingest/url`) via
+   `_process_document_entities()` in `main.py`, non-fatal on extraction
+   failure (chunk/embed storage already succeeded by that point).
+   `EntityStore.find_matching()` does the same case-insensitive
+   substring-match heuristic as `WorkflowStore.find_matching`, folding hits
+   into a non-cited "--- KNOWN ENTITIES ---" `/chat` system block (background
+   context, not a citable source) — passive only, no `entity_get`/
+   `entity_list` tools added to `deep_research.py`'s `ALLOWED_TOOLS` (its
+   dispatch routes 100% of tools through `mcp.call(...)`; adding a
+   chat-agent-local tool would be the first local-dispatch branch in an
+   otherwise fully mcp-proxied loop — deferred until a concrete need
+   emerges). `GET /projects/{id}/entities` exposes read-only listing.
 
 Deprioritized: **Persona** (no stated need); **Conversational/Summaries**
 (already covered by existing `conversations` collection + `briefing.py`/`standup.py`).

@@ -50,6 +50,7 @@ import standup
 from config import settings
 from document_state import DocumentStateStore
 from embeddings import get_model_info as get_embeddings_model_info
+from entity import EntityStore, extract_entities
 from extractors import extract_file, extract_url
 from flashcards import FlashcardStore, generate_candidates, schedule_review
 from health import check_detailed_health
@@ -75,6 +76,7 @@ project_store = ProjectStore(settings.sqlite_path)
 store = ConversationStore(settings.sqlite_path)
 vstore = VectorStore(url=settings.qdrant_url)
 transcript_store = TranscriptStore(settings.sqlite_path)
+entity_store = EntityStore(settings.sqlite_path)
 document_state_store = DocumentStateStore(settings.sqlite_path)
 flashcard_store = FlashcardStore(settings.sqlite_path)
 toolbox_store = ToolboxStore(settings.sqlite_path)
@@ -159,6 +161,7 @@ async def lifespan(app: FastAPI):
     # TranscriptStore and DocumentStateStore tables are always safe to
     # create — no schema coupling to the version wipe above.
     await transcript_store.init()
+    await entity_store.init()
     await document_state_store.init()
     await flashcard_store.init()
     await toolbox_store.init()
@@ -307,6 +310,7 @@ class IngestRequest(BaseModel):
 
 class IngestResponse(BaseModel):
     chunks: int  # How many chunks were stored in Qdrant.
+    entities: int = 0  # Entities extracted + upserted from this document.
 
 
 class IngestTranscriptRequest(BaseModel):
@@ -320,6 +324,7 @@ class IngestTranscriptResponse(BaseModel):
     decisions: int  # Structured decisions extracted + stored.
     action_items: int  # Structured action items extracted + stored.
     risks: int  # Structured risks extracted + stored.
+    entities: int = 0  # Entities extracted + upserted.
 
 
 class DecisionOut(BaseModel):
@@ -394,6 +399,16 @@ class WorkflowOut(BaseModel):
     description: str | None
     created_at: str
     steps: list[WorkflowStepOut]
+
+
+class EntityOut(BaseModel):
+    id: str
+    name: str
+    type: str
+    attributes: str | None
+    sources: list[str]
+    created_at: str
+    updated_at: str
 
 
 class ToolStatsOut(BaseModel):
@@ -663,7 +678,7 @@ async def delete_project(project_id: str):
     Cascade:
       - SQLite:  projects row + messages rows   (ProjectStore.delete)
       - Qdrant:  conversations + documents points tagged with project_id
-      - SQLite:  transcript/document_state/flashcards/toolbox/workflow/scratchpad rows
+      - SQLite:  transcript/entity/document_state/flashcards/toolbox/workflow/scratchpad rows
     """
     # Do the vector deletes first.  If ProjectStore.delete() succeeded but the
     # Qdrant delete failed, we'd be left with orphan vectors filtered on a
@@ -673,6 +688,7 @@ async def delete_project(project_id: str):
     await vstore.delete_by_project(settings.qdrant_collection, project_id)
     await vstore.delete_by_project(settings.qdrant_docs_collection, project_id)
     await transcript_store.delete_by_project(project_id)
+    await entity_store.delete_by_project(project_id)
     await document_state_store.delete_by_project(project_id)
     await flashcard_store.delete_by_project(project_id)
     await toolbox_store.delete_by_project(project_id)
@@ -690,11 +706,46 @@ async def delete_project(project_id: str):
     return {"deleted": True}
 
 
+async def _process_document_entities(project_id: str, source: str, text: str) -> int:
+    """Extract entities from any ingested text and upsert them.
+
+    Shared by every ingest path (plain /ingest, transcripts, and document-kind
+    /ingest/file /ingest/url) — unlike transcript.py's decisions/action_items/
+    risks, entities are relevant to any document, not just meeting transcripts.
+
+    Failure here must not fail the ingest itself: chunk/embed storage already
+    succeeded by the time this runs, and a document without extractable
+    entities (or a flaky extraction call) is a normal, non-fatal outcome — so
+    log and return 0 instead of raising.
+    """
+    try:
+        extracted = await extract_entities(text, chat)
+    except ValueError as exc:
+        logger.warning(
+            "Entity extraction failed for project=%s source=%r: %s",
+            project_id, source, exc,
+        )
+        return 0
+
+    count = 0
+    for item in extracted:
+        name = (item.get("name") or "").strip()
+        entity_type = (item.get("type") or "other").strip() or "other"
+        if not name:
+            continue
+        attributes = item.get("attributes")
+        if attributes in (None, "null"):
+            attributes = None
+        await entity_store.upsert_entity(project_id, name, entity_type, attributes, source)
+        count += 1
+    return count
+
+
 # Routes — chat + ingest + memory search (now project-scoped)
 @app.post("/ingest", response_model=IngestResponse)
 async def post_ingest(req: IngestRequest) -> IngestResponse:
     """Split a document into chunks, embed them, and store them in Qdrant
-    under the given project.
+    under the given project. Also extracts and upserts any named entities.
 
     Args (JSON body):
         project_id: Which project brain owns this document.
@@ -702,11 +753,12 @@ async def post_ingest(req: IngestRequest) -> IngestResponse:
         text:       The full document text.
 
     Returns:
-        {"chunks": N} — the number of chunks stored.
+        {"chunks": N, "entities": M}.
     """
     await _require_project(req.project_id)
     n = await rag.ingest(req.project_id, req.source, req.text, vstore)
-    return IngestResponse(chunks=n)
+    entity_count = await _process_document_entities(req.project_id, req.source, req.text)
+    return IngestResponse(chunks=n, entities=entity_count)
 
 
 async def _process_transcript(
@@ -734,20 +786,24 @@ async def _process_transcript(
         ) from exc
 
     counts = await transcript_store.save_extracted(project_id, source, extracted)
+    entity_count = await _process_document_entities(project_id, source, text)
     logger.info(
-        "Transcript[%s] source=%r: %d chunks, %d decisions, %d action_items, %d risks",
+        "Transcript[%s] source=%r: %d chunks, %d decisions, %d action_items, "
+        "%d risks, %d entities",
         project_id,
         source,
         chunk_count,
         counts["decisions"],
         counts["action_items"],
         counts["risks"],
+        entity_count,
     )
     return IngestTranscriptResponse(
         chunks=chunk_count,
         decisions=counts["decisions"],
         action_items=counts["action_items"],
         risks=counts["risks"],
+        entities=entity_count,
     )
 
 
@@ -792,8 +848,9 @@ async def post_ingest_file(
         return await _process_transcript(project_id, source, text)
 
     chunks = await rag.ingest(project_id, source, text, vstore)
+    entity_count = await _process_document_entities(project_id, source, text)
     return IngestTranscriptResponse(
-        chunks=chunks, decisions=0, action_items=0, risks=0
+        chunks=chunks, decisions=0, action_items=0, risks=0, entities=entity_count
     )
 
 
@@ -824,8 +881,9 @@ async def post_ingest_url(req: IngestUrlRequest) -> IngestTranscriptResponse:
         return await _process_transcript(req.project_id, source, text)
 
     chunks = await rag.ingest(req.project_id, source, text, vstore)
+    entity_count = await _process_document_entities(req.project_id, source, text)
     return IngestTranscriptResponse(
-        chunks=chunks, decisions=0, action_items=0, risks=0
+        chunks=chunks, decisions=0, action_items=0, risks=0, entities=entity_count
     )
 
 
@@ -928,6 +986,29 @@ async def delete_workflow(project_id: str, name: str):
     await _require_project(project_id)
     await workflow_store.delete_by_name(project_id, name)
     return {"status": "deleted"}
+
+
+@app.get("/projects/{project_id}/entities", response_model=list[EntityOut])
+async def list_entities(project_id: str) -> list[EntityOut]:
+    """List all tracked entities for a project, most recently updated first.
+
+    Read-only inspection of entity memory — populated by ingest-time
+    extraction (see _process_document_entities), not created directly here.
+    """
+    await _require_project(project_id)
+    rows = await entity_store.list_by_project(project_id)
+    return [
+        EntityOut(
+            id=e.id,
+            name=e.name,
+            type=e.type,
+            attributes=e.attributes,
+            sources=json.loads(e.sources),
+            created_at=e.created_at,
+            updated_at=e.updated_at,
+        )
+        for e in rows
+    ]
 
 
 @app.get("/projects/{project_id}/toolbox/stats", response_model=list[ToolStatsOut])
@@ -1225,6 +1306,11 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     # workflow.py header / MEMORY_PLAN.md).
     matched_workflow = await workflow_store.find_matching(req.project_id, req.message)
 
+    # 3e. Look up tracked entities (people/stakeholders/tickets/orgs) named
+    # in this message — passive background context, same read-only guidance
+    # mechanism as the matched workflow above.
+    matched_entities = await entity_store.find_matching(req.project_id, req.message)
+
     # 4. Store the user message vector in Qdrant conversations.
     await vstore.upsert(
         settings.qdrant_collection,
@@ -1332,6 +1418,29 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
                     "--- PROJECT KNOWLEDGE ---\n"
                     f"{doc_lines}\n"
                     "--- END PROJECT KNOWLEDGE ---"
+                ),
+            }
+        )
+
+    # Inject tracked entities named in this message — background context,
+    # not a citable source, so it gets a plain (non-numbered) system block
+    # rather than participating in the [N] citation numbering above.
+    if matched_entities:
+        entity_lines = "\n".join(
+            f"- {e.name} ({e.type}): {e.attributes or 'no notes'} "
+            f"[seen in: {', '.join(json.loads(e.sources))}]"
+            for e in matched_entities
+        )
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The following entities (people, stakeholders, tickets, "
+                    "organizations) tracked for this project may be relevant "
+                    "to the user's message:\n\n"
+                    "--- KNOWN ENTITIES ---\n"
+                    f"{entity_lines}\n"
+                    "--- END KNOWN ENTITIES ---"
                 ),
             }
         )

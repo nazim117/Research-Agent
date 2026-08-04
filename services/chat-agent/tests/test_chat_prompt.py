@@ -84,6 +84,7 @@ async def test_doc_chunk_produces_project_knowledge_block():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -135,6 +136,7 @@ async def test_no_doc_chunks_no_knowledge_block():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -173,6 +175,7 @@ async def test_prior_refusals_stripped_from_recent_history():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -213,6 +216,7 @@ async def test_source_label_in_prompt():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -249,6 +253,7 @@ async def test_one_chunk_produces_citations_array():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -286,6 +291,7 @@ async def test_no_chunks_produces_empty_citations():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -328,6 +334,7 @@ async def test_two_chunks_produce_ordered_citations():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -383,6 +390,7 @@ async def test_web_search_off_by_default_never_calls_mcp():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
@@ -422,6 +430,7 @@ async def test_web_search_on_injects_results_and_citations():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
@@ -478,6 +487,7 @@ async def test_web_search_failure_degrades_gracefully():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
         patch("main._mcp") as mcp,
     ):
@@ -548,6 +558,7 @@ async def test_matched_workflow_annotated_with_success_rate():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=_make_matched_workflow()),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=stats),
     ):
         from main import app
@@ -588,6 +599,7 @@ async def test_matched_workflow_no_annotation_without_stats():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=_make_matched_workflow()),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
         patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
     ):
         from main import app
@@ -606,3 +618,94 @@ async def test_matched_workflow_no_annotation_without_stats():
     assert procedure_block is not None
     assert "succeeded]" not in procedure_block["content"]
     assert "web_search" in procedure_block["content"]
+
+
+# ---------------------------------------------------------------------------
+# Entity memory tests
+# ---------------------------------------------------------------------------
+
+def _make_matched_entity():
+    from entity import Entity
+    return Entity(
+        id="ent-1", project_id=FAKE_PROJECT_ID, name="Alice", type="person",
+        attributes="PM on the project", sources='["meeting-1"]',
+        created_at="x", updated_at="y",
+    )
+
+
+@pytest.mark.asyncio
+async def test_matched_entity_produces_known_entities_block():
+    """A matched entity is folded into a '--- KNOWN ENTITIES ---' system block."""
+    captured_messages = []
+
+    async def _spy_chat(messages):
+        captured_messages.extend(messages)
+        return "Alice is the PM."
+
+    with (
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
+        patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
+        patch("main.chat", side_effect=_spy_chat),
+        patch("main.store.history", new_callable=AsyncMock, return_value=[]),
+        patch("main.store.append", new_callable=AsyncMock),
+        patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
+        patch("main.vstore.upsert", new_callable=AsyncMock),
+        patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[_make_matched_entity()]),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
+    ):
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/chat", json={
+                "project_id": FAKE_PROJECT_ID,
+                "session_id": FAKE_SESSION_ID,
+                "message": "What does Alice think?",
+            })
+
+    assert resp.status_code == 200
+    entities_block = next(
+        (m for m in captured_messages if "KNOWN ENTITIES" in m.get("content", "")),
+        None,
+    )
+    assert entities_block is not None
+    assert "Alice" in entities_block["content"]
+    assert "person" in entities_block["content"]
+    assert "PM on the project" in entities_block["content"]
+    assert "meeting-1" in entities_block["content"]
+
+
+@pytest.mark.asyncio
+async def test_no_matched_entities_no_known_entities_block():
+    """No entity hits → no '--- KNOWN ENTITIES ---' block is injected."""
+    captured_messages = []
+
+    async def _spy_chat(messages):
+        captured_messages.extend(messages)
+        return "I don't know."
+
+    with (
+        patch("main.embed_cached", side_effect=_fake_embed_cached),
+        patch("main.rag.retrieve", side_effect=_fake_retrieve_empty),
+        patch("main.chat", side_effect=_spy_chat),
+        patch("main.store.history", new_callable=AsyncMock, return_value=[]),
+        patch("main.store.append", new_callable=AsyncMock),
+        patch("main.vstore.search", new_callable=AsyncMock, return_value=[]),
+        patch("main.vstore.upsert", new_callable=AsyncMock),
+        patch("main._require_project", new_callable=AsyncMock),
+        patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
+        patch("main.workflow_store.find_matching", new_callable=AsyncMock, return_value=None),
+        patch("main.entity_store.find_matching", new_callable=AsyncMock, return_value=[]),
+        patch("main.toolbox_store.get_stats_for_tool", new_callable=AsyncMock, return_value=None),
+    ):
+        from main import app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/chat", json={
+                "project_id": FAKE_PROJECT_ID,
+                "session_id": FAKE_SESSION_ID,
+                "message": "What's the status?",
+            })
+
+    assert resp.status_code == 200
+    assert not any("KNOWN ENTITIES" in m.get("content", "") for m in captured_messages)
