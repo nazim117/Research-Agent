@@ -81,10 +81,15 @@ class Settings(BaseSettings):
     memory_search_k: int = 5
 
     # Minimum cosine similarity for a document chunk to be injected into the
-    # prompt. Below ~0.5 the docstring in vectors.py calls a match "unrelated" —
-    # use that as the default cutoff so off-topic queries don't drag in
-    # irrelevant chunks (e.g. "what is your name" pulling in Welcome.md at score 0).
-    rag_score_threshold: float = 0.5
+    # prompt. 0.5 (a generic cosine-similarity rule of thumb — see vectors.py)
+    # is too strict for BAAI/bge-base-en-v1.5: BGE-family embeddings compress
+    # similarity scores lower than that intuition assumes, so genuinely
+    # relevant chunks routinely land at 0.35-0.5 (measured: a document titled
+    # "What is an AI Agent" scored 0.44 against the query "give me a summary
+    # of this course" and was wrongly filtered out at threshold=0.5). Lowered
+    # so real matches in small, single-user knowledge bases aren't dropped;
+    # still filters genuinely unrelated chunks (near-0 scores).
+    rag_score_threshold: float = 0.35
 
     # Same idea for conversation memory hits.
     memory_score_threshold: float = 0.5

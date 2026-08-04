@@ -16,6 +16,16 @@ tags:
     description: Document and URL ingestion pipeline
   - name: studio
     description: Extracted decisions, risks, action items, briefings, and standups
+  - name: workflow
+    description: Stored named procedures replayed as read-only guidance in chat
+  - name: entities
+    description: Tracked people/stakeholders/tickets/organizations (entity memory)
+  - name: toolbox
+    description: Per-tool success/failure track record, derived from the tool-call log
+  - name: cache
+    description: Embedding cache visibility
+  - name: scratchpad
+    description: Read-only inspection of the deep-research working memory
   - name: memory
     description: Semantic search over conversation memory
 
@@ -480,6 +490,202 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /projects/{project_id}/workflows:
+    post:
+      tags: [workflow]
+      summary: Create or replace a stored workflow by name
+      description: >
+        Explicit, hand-authored procedure storage — steps aren't derived from
+        live tool-call history. Re-saving the same name replaces its steps
+        rather than duplicating them. Matched workflows are folded into /chat
+        as read-only guidance; nothing executes automatically.
+      operationId: saveWorkflow
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowCreateRequest"
+      responses:
+        "200":
+          description: Created or replaced workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workflow"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    get:
+      tags: [workflow]
+      summary: List all stored workflows for a project, newest first
+      operationId: listWorkflows
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: List of workflows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Workflow"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /projects/{project_id}/workflows/{name}:
+    delete:
+      tags: [workflow]
+      summary: Delete a stored workflow by name
+      operationId: deleteWorkflow
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /projects/{project_id}/entities:
+    get:
+      tags: [entities]
+      summary: List tracked entities for a project, most recently updated first
+      description: >
+        Read-only inspection of entity memory (people, stakeholders, tickets,
+        organizations) — populated by extraction at ingest time, not created
+        directly through this API. Matching entities are folded into /chat as
+        passive background context.
+      operationId: listEntities
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: List of entities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Entity"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /projects/{project_id}/toolbox/stats:
+    get:
+      tags: [toolbox]
+      summary: Per-tool success/failure track record for a project
+      description: >
+        Derived from the tool_calls log. Also consumed internally by /chat to
+        annotate matched workflow steps with their real track record.
+      operationId: getToolboxStats
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Per-tool stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ToolStats"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /projects/{project_id}/cache/stats:
+    get:
+      tags: [cache]
+      summary: Embedding-cache entry count and cumulative hit count
+      description: >
+        Read-only visibility into whether the semantic embedding cache is
+        actually absorbing repeated embed() calls for this project.
+      operationId: getCacheStats
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Cache stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheStats"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /projects/{project_id}/scratchpad:
+    get:
+      tags: [scratchpad]
+      summary: Read-only inspection of the deep-research scratchpad for a session
+      description: >
+        Debuggability only — no create/update route, since only the
+        deep_research tool-calling loop itself writes entries (see
+        ChatRequest.deep_research). Entries are cleared at the start of each
+        research task.
+      operationId: getScratchpad
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: session_id
+          in: query
+          required: true
+          description: Which conversation's scratchpad to read.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Scratchpad entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScratchpadEntry"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /memory/search:
     get:
       tags: [memory]
@@ -590,6 +796,20 @@ components:
           type: string
         message:
           type: string
+        web_search:
+          type: boolean
+          default: false
+          description: >
+            User-triggered live web search folded into this turn's prompt as
+            another citation-numbered context block. The model never decides
+            this itself.
+        deep_research:
+          type: boolean
+          default: false
+          description: >
+            Opts this turn into the multi-step tool-calling research loop
+            (read-only tools only). Every step is logged to the project's
+            scratchpad for this session — see /projects/{project_id}/scratchpad.
 
     ChatResponse:
       type: object
@@ -763,6 +983,148 @@ components:
           type: string
         chunks:
           type: integer
+
+    WorkflowStepIn:
+      type: object
+      required: [tool_name]
+      properties:
+        tool_name:
+          type: string
+          minLength: 1
+        arguments:
+          type: object
+          default: {}
+        description:
+          type: string
+          nullable: true
+
+    WorkflowCreateRequest:
+      type: object
+      required: [name, trigger, steps]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        trigger:
+          type: string
+          minLength: 1
+          description: Comma-separated keywords/phrases matched against incoming chat messages.
+        description:
+          type: string
+          nullable: true
+        steps:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/WorkflowStepIn"
+
+    WorkflowStep:
+      type: object
+      required: [step_order, tool_name, arguments, description]
+      properties:
+        step_order:
+          type: integer
+        tool_name:
+          type: string
+        arguments:
+          type: object
+        description:
+          type: string
+          nullable: true
+
+    Workflow:
+      type: object
+      required: [name, trigger, description, created_at, steps]
+      properties:
+        name:
+          type: string
+        trigger:
+          type: string
+        description:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStep"
+
+    Entity:
+      type: object
+      required: [id, name, type, attributes, sources, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          description: Free-text label, e.g. person, stakeholder, organization, ticket.
+        attributes:
+          type: string
+          nullable: true
+          description: Free-text notes (role/status/context) as last extracted.
+        sources:
+          type: array
+          items:
+            type: string
+          description: Source labels this entity has been seen in, deduplicated.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ToolStats:
+      type: object
+      required: [tool_name, call_count, success_count, failure_count, success_rate, avg_duration_ms, last_used_at]
+      properties:
+        tool_name:
+          type: string
+        call_count:
+          type: integer
+        success_count:
+          type: integer
+        failure_count:
+          type: integer
+        success_rate:
+          type: number
+          format: float
+        avg_duration_ms:
+          type: number
+          format: float
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+
+    CacheStats:
+      type: object
+      required: [entry_count, total_hits]
+      properties:
+        entry_count:
+          type: integer
+        total_hits:
+          type: integer
+
+    ScratchpadEntry:
+      type: object
+      required: [key, value, created_at, updated_at]
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     MemoryHit:
       type: object

@@ -1,0 +1,13 @@
+# Root-level ruff config so import-sort (isort) rules agree regardless of
+# the cwd ruff is invoked from — `cd services/chat-agent && ruff check .`
+# (CI's convention, see CLAUDE.md) and `ruff check services/chat-agent/main.py`
+# from repo root previously disagreed on whether same-directory modules
+# (briefing, deep_research, etc.) count as first-party.
+src = ["services/chat-agent"]
+
+[lint]
+# B008: FastAPI's dependency-injection idiom is `param: T = Depends(...)` /
+# `= File(...)` / `= Form(...)` — evaluated per-request by FastAPI, not at
+# import time like a normal mutable-default-argument bug. Ruff's generic
+# rule doesn't know that, so it's a framework-wide false positive here.
+ignore = ["B008"]

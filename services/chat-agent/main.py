@@ -1568,13 +1568,27 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     await store.append(req.project_id, req.session_id, "assistant", reply)
 
     # 8. Store the assistant reply vector in Qdrant conversations.
-    reply_vec = await embed_cached(semantic_cache_store, req.project_id, reply)
-    await vstore.upsert(
-        settings.qdrant_collection,
-        project_id=req.project_id,
-        vector=reply_vec,
-        payload={"session_id": req.session_id, "role": "assistant", "content": reply},
-    )
+    #
+    # Degrade, don't fail — the LLM has already produced a real answer, so an
+    # embedding error here (e.g. the reply exceeds the embeddings model's max
+    # input length, more likely with web_search since replies run longer)
+    # must not turn a successful turn into a 502. Same "degrade don't fail"
+    # pattern as the web_search failure path above; conversation-memory
+    # search just won't find this one reply, which is a lesser cost than
+    # discarding the reply entirely.
+    try:
+        reply_vec = await embed_cached(semantic_cache_store, req.project_id, reply)
+        await vstore.upsert(
+            settings.qdrant_collection,
+            project_id=req.project_id,
+            vector=reply_vec,
+            payload={"session_id": req.session_id, "role": "assistant", "content": reply},
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "Failed to embed/store assistant reply vector for project=%s session=%s: %s",
+            req.project_id, req.session_id, exc.detail,
+        )
 
     # 9. Return.
     return ChatResponse(reply=reply, citations=citations)
