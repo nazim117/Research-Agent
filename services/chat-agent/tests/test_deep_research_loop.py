@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from actions import ActionStore
 from deep_research import ALLOWED_TOOLS, MCPError, _canonical_args, run_research_loop
 from scratchpad import ScratchpadStore
 
@@ -24,6 +25,15 @@ async def scratchpad():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name
     store = ScratchpadStore(path)
+    await store.init()
+    return store
+
+
+@pytest.fixture
+async def action_store():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    store = ActionStore(path)
     await store.init()
     return store
 
@@ -41,7 +51,7 @@ def test_canonical_args_key_order_independence():
 
 
 @pytest.mark.asyncio
-async def test_normal_single_tool_call_terminates_in_final_answer(scratchpad):
+async def test_normal_single_tool_call_terminates_in_final_answer(scratchpad, action_store):
     replies = [
         _tool_call("web_search", {"query": "x"}),
         "Final answer text",
@@ -56,6 +66,7 @@ async def test_normal_single_tool_call_terminates_in_final_answer(scratchpad):
         session_id=SESSION_ID,
         mcp=mcp,
         scratchpad=scratchpad,
+        action_store=action_store,
         chat_fn=chat_fn,
     )
 
@@ -70,7 +81,7 @@ async def test_normal_single_tool_call_terminates_in_final_answer(scratchpad):
 
 
 @pytest.mark.asyncio
-async def test_step_cap_forces_final_answer(scratchpad):
+async def test_step_cap_forces_final_answer(scratchpad, action_store):
     # Always request a (distinct) new tool call — never a clean final answer —
     # so the loop can only stop via the step cap, not the repeat guard.
     def _reply_for_call(n):
@@ -88,6 +99,7 @@ async def test_step_cap_forces_final_answer(scratchpad):
         session_id=SESSION_ID,
         mcp=mcp,
         scratchpad=scratchpad,
+        action_store=action_store,
         chat_fn=chat_fn,
         max_steps=2,
     )
@@ -102,7 +114,7 @@ async def test_step_cap_forces_final_answer(scratchpad):
 
 
 @pytest.mark.asyncio
-async def test_repeat_call_guard_stops_without_reexecuting(scratchpad):
+async def test_repeat_call_guard_stops_without_reexecuting(scratchpad, action_store):
     replies = [
         _tool_call("web_search", {"query": "same"}),
         _tool_call("web_search", {"query": "same"}),  # identical call again
@@ -118,6 +130,7 @@ async def test_repeat_call_guard_stops_without_reexecuting(scratchpad):
         session_id=SESSION_ID,
         mcp=mcp,
         scratchpad=scratchpad,
+        action_store=action_store,
         chat_fn=chat_fn,
         max_steps=10,
     )
@@ -128,10 +141,10 @@ async def test_repeat_call_guard_stops_without_reexecuting(scratchpad):
 
 
 @pytest.mark.asyncio
-async def test_disallowed_tool_name_is_not_executed(scratchpad):
-    assert "file_write" not in ALLOWED_TOOLS
+async def test_disallowed_tool_name_is_not_executed(scratchpad, action_store):
+    assert "jira_add_comment" not in ALLOWED_TOOLS
     replies = [
-        _tool_call("file_write", {"path": "x", "content": "y"}),
+        _tool_call("jira_add_comment", {"key": "X-1", "body": "y"}),
         "final answer after being told no",
     ]
     chat_fn = AsyncMock(side_effect=replies)
@@ -143,6 +156,7 @@ async def test_disallowed_tool_name_is_not_executed(scratchpad):
         session_id=SESSION_ID,
         mcp=mcp,
         scratchpad=scratchpad,
+        action_store=action_store,
         chat_fn=chat_fn,
     )
 
@@ -155,7 +169,39 @@ async def test_disallowed_tool_name_is_not_executed(scratchpad):
 
 
 @pytest.mark.asyncio
-async def test_malformed_json_does_not_crash(scratchpad):
+async def test_write_tool_is_queued_via_action_store_not_executed(scratchpad, action_store):
+    replies = [
+        _tool_call("memory_set", {"key": "k", "value": "v"}),
+        "final answer after queueing write",
+    ]
+    chat_fn = AsyncMock(side_effect=replies)
+    mcp = AsyncMock()
+
+    result = await run_research_loop(
+        _base_messages(),
+        project_id=PROJECT_ID,
+        session_id=SESSION_ID,
+        mcp=mcp,
+        scratchpad=scratchpad,
+        action_store=action_store,
+        chat_fn=chat_fn,
+    )
+
+    assert result.reply == "final answer after queueing write"
+    mcp.call.assert_not_awaited()
+
+    pending = await action_store.list_for_project(PROJECT_ID, status="pending")
+    assert len(pending) == 1
+    assert pending[0].tool_name == "memory_set"
+    assert pending[0].arguments == {"key": "k", "value": "v"}
+
+    entries = await scratchpad.list_by_session(PROJECT_ID, SESSION_ID)
+    stored = json.loads(entries[0].value)
+    assert "queued for human approval" in stored["result_or_error"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_does_not_crash(scratchpad, action_store):
     replies = [
         "<<TOOL_CALL>>{not valid json<<END>>",
         "final answer after malformed call",
@@ -169,6 +215,7 @@ async def test_malformed_json_does_not_crash(scratchpad):
         session_id=SESSION_ID,
         mcp=mcp,
         scratchpad=scratchpad,
+        action_store=action_store,
         chat_fn=chat_fn,
     )
 
@@ -181,7 +228,7 @@ async def test_malformed_json_does_not_crash(scratchpad):
 
 
 @pytest.mark.asyncio
-async def test_mcp_error_during_tool_call_is_caught(scratchpad):
+async def test_mcp_error_during_tool_call_is_caught(scratchpad, action_store):
     replies = [
         _tool_call("web_search", {"query": "x"}),
         "final answer after mcp error",
@@ -196,6 +243,7 @@ async def test_mcp_error_during_tool_call_is_caught(scratchpad):
         session_id=SESSION_ID,
         mcp=mcp,
         scratchpad=scratchpad,
+        action_store=action_store,
         chat_fn=chat_fn,
     )
 

@@ -83,6 +83,51 @@ async def test_deep_research_end_to_end_runs_loop_and_writes_scratchpad():
 
 
 @pytest.mark.asyncio
+async def test_deep_research_write_tool_is_queued_not_executed():
+    replies = [
+        '<<TOOL_CALL>>{"tool": "memory_set", "arguments": {"key": "k", "value": "v"}}<<END>>',
+        "Final answer from research",
+    ]
+
+    async def _spy_chat(messages):
+        return replies.pop(0)
+
+    with ExitStack() as stack:
+        for cm in _common_patches():
+            stack.enter_context(cm)
+        stack.enter_context(patch("main.chat", side_effect=_spy_chat))
+        mock_mcp_call = stack.enter_context(
+            patch("main._mcp.call", new_callable=AsyncMock, return_value={"results": ["hit"]})
+        )
+        stack.enter_context(patch("main.scratchpad_store.clear_session", new_callable=AsyncMock))
+        stack.enter_context(patch("main.scratchpad_store.set_entry", new_callable=AsyncMock))
+        mock_create_pending = stack.enter_context(
+            patch("main.action_store.create_pending", new_callable=AsyncMock, return_value="action-123")
+        )
+
+        from main import app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post(
+                "/chat",
+                json={
+                    "project_id": FAKE_PROJECT_ID,
+                    "session_id": FAKE_SESSION_ID,
+                    "message": "remember something",
+                    "deep_research": True,
+                },
+            )
+
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == "Final answer from research"
+
+    mock_create_pending.assert_awaited_once_with(
+        FAKE_PROJECT_ID, "memory_set", {"key": "k", "value": "v"}
+    )
+    mock_mcp_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_deep_research_false_leaves_existing_behavior_unchanged():
     async def _spy_chat(messages):
         return "plain reply"

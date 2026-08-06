@@ -12,11 +12,12 @@
 # Absence of the marker in a reply means the model is done; that reply is
 # the final answer and the loop stops.
 #
-# Restricted to READ-ONLY tools only (see mcp-server's registry.go for the
-# full tool list) — there is no human-in-the-loop approval gate left in this
-# codebase (actions.py/<<DRAFT_ACTION>> was removed in d5038c9e), so write
-# tools (file_write, memory_set, http_request) must never be auto-invoked
-# here.
+# Read-only tools (READ_TOOLS) are auto-executed via mcp.call() as before.
+# Write tools (WRITE_TOOLS: file_write, memory_set, http_request) are never
+# auto-invoked — instead a request for one creates a pending row in
+# actions.py's ActionStore and the loop is told the action was queued, not
+# executed. A human must call POST /projects/{id}/actions/{id}/approve
+# before it actually runs.
 #
 # Safety nets, in priority order:
 #   1. Hard step cap (settings.deep_research_max_steps).
@@ -37,16 +38,15 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from actions import ActionStore
 from config import settings
 from mcp_client import MCPClient, MCPError
 from scratchpad import ScratchpadStore
 
 logger = logging.getLogger("uvicorn.error")
 
-# Only these tools may be auto-invoked by the loop. Everything else in
-# registry.go (memory_set, file_write, http_request) is a write/side-effecting
-# tool and is deliberately excluded — no approval gate exists to guard them.
-ALLOWED_TOOLS: frozenset[str] = frozenset(
+# Read-only tools: auto-executed via mcp.call() same as always.
+READ_TOOLS: frozenset[str] = frozenset(
     {
         "web_search",
         "web_fetch",
@@ -57,15 +57,29 @@ ALLOWED_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# Write/side-effecting tools: requesting one queues a pending Action instead
+# of executing it — see actions.py. Never auto-invoked.
+WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "memory_set",
+        "file_write",
+        "http_request",
+    }
+)
+
+ALLOWED_TOOLS: frozenset[str] = READ_TOOLS | WRITE_TOOLS
+
 # Matches <<TOOL_CALL>>{...json...}<<END>> anywhere in the reply text.
 # DOTALL so the JSON blob can itself contain newlines.
 _TOOL_CALL_RE = re.compile(r"<<TOOL_CALL>>(.*?)<<END>>", re.DOTALL)
 
 _TOOL_INSTRUCTIONS = (
-    "You are in deep-research mode. You may call a read-only tool by "
+    "You are in deep-research mode. You may call a tool by "
     "replying with EXACTLY this format:\n\n"
     '<<TOOL_CALL>>{"tool": "<name>", "arguments": {...}}<<END>>\n\n'
-    f"Allowed tools: {', '.join(sorted(ALLOWED_TOOLS))}.\n"
+    f"Read-only tools (run immediately): {', '.join(sorted(READ_TOOLS))}.\n"
+    f"Write tools (queued for human approval, do not run immediately): "
+    f"{', '.join(sorted(WRITE_TOOLS))}.\n"
     "If you already have enough information, reply normally with your final "
     "answer and do NOT include a <<TOOL_CALL>> block — that is how the loop "
     "knows you are done."
@@ -134,6 +148,7 @@ async def run_research_loop(
     session_id: str,
     mcp: MCPClient,
     scratchpad: ScratchpadStore,
+    action_store: ActionStore,
     chat_fn: Callable[[list[dict]], Awaitable[str]],
     max_steps: int | None = None,
 ) -> ResearchResult:
@@ -186,6 +201,16 @@ async def run_research_loop(
                 repeat_guard_tripped = True
                 result_text = "ERROR: repeated call detected, forcing final answer"
                 steps.append(ResearchStep(tool, arguments, None, "repeat_call_guard_tripped", reply))
+            elif tool in WRITE_TOOLS:
+                seen_calls.add(call_key)
+                action_id = await action_store.create_pending(project_id, tool, arguments)
+                result = {"action_id": action_id, "status": "pending_approval"}
+                result_text = (
+                    f"Action queued for human approval (id={action_id}); it will not "
+                    f"run until approved via POST /projects/{project_id}/actions/"
+                    f"{action_id}/approve."
+                )
+                steps.append(ResearchStep(tool, arguments, result, None, reply))
             else:
                 seen_calls.add(call_key)
                 try:

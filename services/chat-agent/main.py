@@ -47,6 +47,7 @@ import deep_research
 import env_config
 import rag
 import standup
+from actions import ActionStore, execute_action
 from config import settings
 from document_state import DocumentStateStore
 from embeddings import get_model_info as get_embeddings_model_info
@@ -83,6 +84,7 @@ toolbox_store = ToolboxStore(settings.sqlite_path)
 workflow_store = WorkflowStore(settings.sqlite_path)
 scratchpad_store = ScratchpadStore(settings.sqlite_path)
 semantic_cache_store = SemanticCacheStore(settings.sqlite_path)
+action_store = ActionStore(settings.sqlite_path)
 
 # Shared MCPClient — the gateway to mcp-server's tools (web search, etc.).
 # Credentials (e.g. BRAVE_SEARCH_API_KEY) live on the mcp-server; this
@@ -168,6 +170,7 @@ async def lifespan(app: FastAPI):
     await workflow_store.init()
     await scratchpad_store.init()
     await semantic_cache_store.init()
+    await action_store.init()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -424,6 +427,17 @@ class ToolStatsOut(BaseModel):
 class CacheStatsOut(BaseModel):
     entry_count: int
     total_hits: int
+
+
+class ActionOut(BaseModel):
+    id: str
+    tool_name: str
+    status: str
+    arguments: dict
+    result: dict | None
+    error: str | None
+    created_at: str
+    completed_at: str | None
 
 
 class ScratchpadEntryOut(BaseModel):
@@ -695,6 +709,7 @@ async def delete_project(project_id: str):
     await workflow_store.delete_by_project(project_id)
     await scratchpad_store.delete_by_project(project_id)
     await semantic_cache_store.delete_by_project(project_id)
+    await action_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -1042,6 +1057,76 @@ async def get_cache_stats(project_id: str) -> CacheStatsOut:
     await _require_project(project_id)
     stats = await semantic_cache_store.get_stats(project_id)
     return CacheStatsOut(entry_count=stats.entry_count, total_hits=stats.total_hits)
+
+
+def _action_out(a) -> ActionOut:
+    return ActionOut(
+        id=a.id,
+        tool_name=a.tool_name,
+        status=a.status,
+        arguments=a.arguments,
+        result=a.result,
+        error=a.error,
+        created_at=a.created_at,
+        completed_at=a.completed_at,
+    )
+
+
+@app.get("/projects/{project_id}/actions", response_model=list[ActionOut])
+async def list_actions(
+    project_id: str,
+    status: str | None = Query(None, description="Filter by status, e.g. 'pending'."),
+) -> list[ActionOut]:
+    """List agent-proposed write actions for a project, newest first.
+
+    Populated by deep_research.py's loop when it requests a write tool
+    (memory_set/file_write/http_request) — see actions.py. Nothing here
+    executes until approved below.
+    """
+    await _require_project(project_id)
+    rows = await action_store.list_for_project(project_id, status=status)
+    return [_action_out(a) for a in rows]
+
+
+@app.post("/projects/{project_id}/actions/{action_id}/approve", response_model=ActionOut)
+async def approve_action(project_id: str, action_id: str) -> ActionOut:
+    """Approve a pending action and execute it immediately.
+
+    Transitions pending -> approved -> executed (or failed if the underlying
+    mcp-server call errors). This is the only path by which an agent-proposed
+    write tool actually runs — see actions.py's header comment.
+    """
+    await _require_project(project_id)
+    action = await action_store.get(action_id)
+    if action is None or action.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Action {action_id!r} not found.")
+    try:
+        await action_store.approve(action_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    action = await action_store.get(action_id)
+    try:
+        result = await execute_action(action, _mcp, project_id)
+        await action_store.mark_executed(action_id, result)
+    except MCPError as exc:
+        await action_store.mark_failed(action_id, str(exc))
+
+    return _action_out(await action_store.get(action_id))
+
+
+@app.post("/projects/{project_id}/actions/{action_id}/reject", response_model=ActionOut)
+async def reject_action(project_id: str, action_id: str) -> ActionOut:
+    """Reject a pending action (terminal) — it will never execute."""
+    await _require_project(project_id)
+    action = await action_store.get(action_id)
+    if action is None or action.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Action {action_id!r} not found.")
+    try:
+        await action_store.reject(action_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _action_out(await action_store.get(action_id))
 
 
 @app.get("/projects/{project_id}/scratchpad", response_model=list[ScratchpadEntryOut])
@@ -1552,6 +1637,7 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
             session_id=req.session_id,
             mcp=_mcp,
             scratchpad=scratchpad_store,
+            action_store=action_store,
             chat_fn=chat,
         )
         reply = research_result.reply
