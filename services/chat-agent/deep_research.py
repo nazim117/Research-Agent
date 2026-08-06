@@ -28,7 +28,9 @@
 #      available, answer now" instruction.
 #
 # Every step (successful call, disallowed-tool, malformed-JSON, or MCPError)
-# is written to the scratchpad under a per-step key — see scratchpad.py.
+# is written durably to an agent_task_steps row — see tasks.py. The loop
+# owns the whole task lifecycle: it creates the task the instant it starts
+# (status='running') and marks it 'done'/'failed' before returning.
 
 from __future__ import annotations
 
@@ -41,7 +43,7 @@ from dataclasses import dataclass, field
 from actions import ActionStore
 from config import settings
 from mcp_client import MCPClient, MCPError
-from scratchpad import ScratchpadStore
+from tasks import TaskStore
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -146,8 +148,9 @@ async def run_research_loop(
     *,
     project_id: str,
     session_id: str,
+    goal: str,
     mcp: MCPClient,
-    scratchpad: ScratchpadStore,
+    task_store: TaskStore,
     action_store: ActionStore,
     chat_fn: Callable[[list[dict]], Awaitable[str]],
     max_steps: int | None = None,
@@ -159,10 +162,16 @@ async def run_research_loop(
     list (never mutates the caller's own), appends the tool-instructions
     system block right before the trailing user message, then repeatedly
     calls chat_fn, parses/executes tool calls, appends assistant + synthetic
-    tool-result messages, and writes each step to the scratchpad.
+    tool-result messages, and writes each step durably via task_store.
+
+    Owns the whole task lifecycle: creates the agent_tasks row (status
+    'running') before the first LLM call, and marks it 'done' (with the
+    final reply) or 'failed' (with the exception) before returning/raising.
     """
     if max_steps is None:
         max_steps = settings.deep_research_max_steps
+
+    task = await task_store.create(project_id, session_id, goal)
 
     working_messages = list(messages)
     # Insert right before the trailing user message — closest to the point
@@ -171,69 +180,68 @@ async def run_research_loop(
 
     steps: list[ResearchStep] = []
     seen_calls: set[tuple[str, str]] = set()
-    step_num = 0
 
-    while True:
-        reply = await chat_fn(working_messages)
-        tool, arguments, parse_error = _parse_tool_call(reply)
+    try:
+        while True:
+            reply = await chat_fn(working_messages)
+            tool, arguments, parse_error = _parse_tool_call(reply)
 
-        if tool is None and parse_error is None:
-            # Clean final answer — no marker present. Done.
-            steps.append(ResearchStep(None, None, None, None, reply))
-            return ResearchResult(reply=reply, steps=steps)
+            if tool is None and parse_error is None:
+                # Clean final answer — no marker present. Done.
+                steps.append(ResearchStep(None, None, None, None, reply))
+                await task_store.mark_done(task.id, reply)
+                return ResearchResult(reply=reply, steps=steps)
 
-        step_num += 1
-        working_messages.append({"role": "assistant", "content": reply})
+            working_messages.append({"role": "assistant", "content": reply})
 
-        repeat_guard_tripped = False
-        result_text: str
+            repeat_guard_tripped = False
+            result_text: str
 
-        if parse_error is not None:
-            result_text = f"ERROR: {parse_error}"
-            steps.append(ResearchStep(tool, arguments, None, parse_error, reply))
-        elif tool not in ALLOWED_TOOLS:
-            error = f"tool {tool!r} is not allowed in deep-research mode"
-            result_text = f"ERROR: {error}"
-            steps.append(ResearchStep(tool, arguments, None, error, reply))
-        else:
-            call_key = (tool, _canonical_args(arguments))
-            if call_key in seen_calls:
-                repeat_guard_tripped = True
-                result_text = "ERROR: repeated call detected, forcing final answer"
-                steps.append(ResearchStep(tool, arguments, None, "repeat_call_guard_tripped", reply))
-            elif tool in WRITE_TOOLS:
-                seen_calls.add(call_key)
-                action_id = await action_store.create_pending(project_id, tool, arguments)
-                result = {"action_id": action_id, "status": "pending_approval"}
-                result_text = (
-                    f"Action queued for human approval (id={action_id}); it will not "
-                    f"run until approved via POST /projects/{project_id}/actions/"
-                    f"{action_id}/approve."
-                )
-                steps.append(ResearchStep(tool, arguments, result, None, reply))
+            if parse_error is not None:
+                result_text = f"ERROR: {parse_error}"
+                steps.append(ResearchStep(tool, arguments, None, parse_error, reply))
+            elif tool not in ALLOWED_TOOLS:
+                error = f"tool {tool!r} is not allowed in deep-research mode"
+                result_text = f"ERROR: {error}"
+                steps.append(ResearchStep(tool, arguments, None, error, reply))
             else:
-                seen_calls.add(call_key)
-                try:
-                    result = await mcp.call(tool, arguments, project_id=project_id)
-                    result_text = json.dumps(result, default=str)[:2000]
+                call_key = (tool, _canonical_args(arguments))
+                if call_key in seen_calls:
+                    repeat_guard_tripped = True
+                    result_text = "ERROR: repeated call detected, forcing final answer"
+                    steps.append(ResearchStep(tool, arguments, None, "repeat_call_guard_tripped", reply))
+                elif tool in WRITE_TOOLS:
+                    seen_calls.add(call_key)
+                    action_id = await action_store.create_pending(project_id, tool, arguments)
+                    result = {"action_id": action_id, "status": "pending_approval"}
+                    result_text = (
+                        f"Action queued for human approval (id={action_id}); it will not "
+                        f"run until approved via POST /projects/{project_id}/actions/"
+                        f"{action_id}/approve."
+                    )
                     steps.append(ResearchStep(tool, arguments, result, None, reply))
-                except MCPError as exc:
-                    result_text = f"ERROR: {exc}"
-                    steps.append(ResearchStep(tool, arguments, None, str(exc), reply))
+                else:
+                    seen_calls.add(call_key)
+                    try:
+                        result = await mcp.call(tool, arguments, project_id=project_id)
+                        result_text = json.dumps(result, default=str)[:2000]
+                        steps.append(ResearchStep(tool, arguments, result, None, reply))
+                    except MCPError as exc:
+                        result_text = f"ERROR: {exc}"
+                        steps.append(ResearchStep(tool, arguments, None, str(exc), reply))
 
-        await scratchpad.set_entry(
-            project_id,
-            session_id,
-            f"step_{step_num}",
-            json.dumps({"tool": tool, "arguments": arguments, "result_or_error": result_text}, default=str),
-        )
+            await task_store.add_step(task.id, tool, arguments, result_text)
 
-        if repeat_guard_tripped or step_num >= max_steps:
-            working_messages.append({"role": "system", "content": _FORCED_FINAL_INSTRUCTIONS})
-            final_reply = await chat_fn(working_messages)
-            steps.append(ResearchStep(None, None, None, None, final_reply))
-            return ResearchResult(reply=final_reply, steps=steps)
+            if repeat_guard_tripped or len(steps) >= max_steps:
+                working_messages.append({"role": "system", "content": _FORCED_FINAL_INSTRUCTIONS})
+                final_reply = await chat_fn(working_messages)
+                steps.append(ResearchStep(None, None, None, None, final_reply))
+                await task_store.mark_done(task.id, final_reply)
+                return ResearchResult(reply=final_reply, steps=steps)
 
-        working_messages.append(
-            {"role": "system", "content": f"Tool result for {tool!r}: {result_text}"}
-        )
+            working_messages.append(
+                {"role": "system", "content": f"Tool result for {tool!r}: {result_text}"}
+            )
+    except Exception as exc:
+        await task_store.mark_failed(task.id, str(exc))
+        raise

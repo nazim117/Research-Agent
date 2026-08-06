@@ -38,7 +38,7 @@ class SemanticCacheStore:
     """Manages the embedding_cache table.
 
     Lives in the same SQLite file as everything else, following the same
-    pattern as WorkflowStore/ToolboxStore/ScratchpadStore.
+    pattern as WorkflowStore/ToolboxStore/TaskStore.
     """
 
     def __init__(self, db_path: str) -> None:

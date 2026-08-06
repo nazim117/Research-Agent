@@ -2,47 +2,51 @@
 # tool-calling research loop (deep_research.py), calling run_research_loop()
 # directly rather than going through the /chat route.
 #
-# ScratchpadStore is real (backed by a temp SQLite file) since it's cheap
-# and gives real assurance the upsert schema works; chat_fn and the mcp
-# client are faked so there's no network / no real LLM.
+# TaskStore is real (backed by a temp SQLite file) since it's cheap and
+# gives real assurance the create/add_step/mark_done schema works; chat_fn
+# and the mcp client are faked so there's no network / no real LLM.
 
-import json
-import tempfile
 from unittest.mock import AsyncMock
 
 import pytest
 
 from actions import ActionStore
 from deep_research import ALLOWED_TOOLS, MCPError, _canonical_args, run_research_loop
-from scratchpad import ScratchpadStore
+from tasks import TaskStore
 
 PROJECT_ID = "proj-dr-1"
 SESSION_ID = "sess-dr-1"
+GOAL = "research the thing"
 
 
 @pytest.fixture
-async def scratchpad():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
-    store = ScratchpadStore(path)
+async def task_store(tmp_path):
+    store = TaskStore(str(tmp_path / "tasks.db"))
     await store.init()
     return store
 
 
 @pytest.fixture
-async def action_store():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
-    store = ActionStore(path)
+async def action_store(tmp_path):
+    store = ActionStore(str(tmp_path / "actions.db"))
     await store.init()
     return store
+
+
+async def _get_only_task(task_store):
+    """Every test here runs exactly one loop invocation, so exactly one task."""
+    tasks = await task_store.list_for_project(PROJECT_ID)
+    assert len(tasks) == 1
+    return await task_store.get(tasks[0].id)
 
 
 def _base_messages():
-    return [{"role": "user", "content": "research the thing"}]
+    return [{"role": "user", "content": GOAL}]
 
 
 def _tool_call(tool: str, arguments: dict) -> str:
+    import json
+
     return f'<<TOOL_CALL>>{json.dumps({"tool": tool, "arguments": arguments})}<<END>>'
 
 
@@ -51,7 +55,7 @@ def test_canonical_args_key_order_independence():
 
 
 @pytest.mark.asyncio
-async def test_normal_single_tool_call_terminates_in_final_answer(scratchpad, action_store):
+async def test_normal_single_tool_call_terminates_in_final_answer(task_store, action_store):
     replies = [
         _tool_call("web_search", {"query": "x"}),
         "Final answer text",
@@ -64,8 +68,9 @@ async def test_normal_single_tool_call_terminates_in_final_answer(scratchpad, ac
         _base_messages(),
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
+        goal=GOAL,
         mcp=mcp,
-        scratchpad=scratchpad,
+        task_store=task_store,
         action_store=action_store,
         chat_fn=chat_fn,
     )
@@ -73,15 +78,16 @@ async def test_normal_single_tool_call_terminates_in_final_answer(scratchpad, ac
     assert result.reply == "Final answer text"
     mcp.call.assert_awaited_once_with("web_search", {"query": "x"}, project_id=PROJECT_ID)
 
-    entries = await scratchpad.list_by_session(PROJECT_ID, SESSION_ID)
-    assert len(entries) == 1
-    assert entries[0].key == "step_1"
-    stored = json.loads(entries[0].value)
-    assert stored["tool"] == "web_search"
+    task = await _get_only_task(task_store)
+    assert task.status == "done"
+    assert task.reply == "Final answer text"
+    assert task.goal == GOAL
+    assert len(task.steps) == 1
+    assert task.steps[0].tool_name == "web_search"
 
 
 @pytest.mark.asyncio
-async def test_step_cap_forces_final_answer(scratchpad, action_store):
+async def test_step_cap_forces_final_answer(task_store, action_store):
     # Always request a (distinct) new tool call — never a clean final answer —
     # so the loop can only stop via the step cap, not the repeat guard.
     def _reply_for_call(n):
@@ -97,8 +103,9 @@ async def test_step_cap_forces_final_answer(scratchpad, action_store):
         _base_messages(),
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
+        goal=GOAL,
         mcp=mcp,
-        scratchpad=scratchpad,
+        task_store=task_store,
         action_store=action_store,
         chat_fn=chat_fn,
         max_steps=2,
@@ -109,12 +116,13 @@ async def test_step_cap_forces_final_answer(scratchpad, action_store):
     last_call_messages = chat_fn.await_args_list[-1].args[0]
     assert any("No more tool calls are available" in m["content"] for m in last_call_messages)
 
-    entries = await scratchpad.list_by_session(PROJECT_ID, SESSION_ID)
-    assert len(entries) == 2
+    task = await _get_only_task(task_store)
+    assert task.status == "done"
+    assert len(task.steps) == 2
 
 
 @pytest.mark.asyncio
-async def test_repeat_call_guard_stops_without_reexecuting(scratchpad, action_store):
+async def test_repeat_call_guard_stops_without_reexecuting(task_store, action_store):
     replies = [
         _tool_call("web_search", {"query": "same"}),
         _tool_call("web_search", {"query": "same"}),  # identical call again
@@ -128,8 +136,9 @@ async def test_repeat_call_guard_stops_without_reexecuting(scratchpad, action_st
         _base_messages(),
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
+        goal=GOAL,
         mcp=mcp,
-        scratchpad=scratchpad,
+        task_store=task_store,
         action_store=action_store,
         chat_fn=chat_fn,
         max_steps=10,
@@ -141,7 +150,7 @@ async def test_repeat_call_guard_stops_without_reexecuting(scratchpad, action_st
 
 
 @pytest.mark.asyncio
-async def test_disallowed_tool_name_is_not_executed(scratchpad, action_store):
+async def test_disallowed_tool_name_is_not_executed(task_store, action_store):
     assert "jira_add_comment" not in ALLOWED_TOOLS
     replies = [
         _tool_call("jira_add_comment", {"key": "X-1", "body": "y"}),
@@ -154,8 +163,9 @@ async def test_disallowed_tool_name_is_not_executed(scratchpad, action_store):
         _base_messages(),
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
+        goal=GOAL,
         mcp=mcp,
-        scratchpad=scratchpad,
+        task_store=task_store,
         action_store=action_store,
         chat_fn=chat_fn,
     )
@@ -163,13 +173,12 @@ async def test_disallowed_tool_name_is_not_executed(scratchpad, action_store):
     assert result.reply == "final answer after being told no"
     mcp.call.assert_not_awaited()
 
-    entries = await scratchpad.list_by_session(PROJECT_ID, SESSION_ID)
-    stored = json.loads(entries[0].value)
-    assert "not allowed" in stored["result_or_error"]
+    task = await _get_only_task(task_store)
+    assert "not allowed" in task.steps[0].result_or_error
 
 
 @pytest.mark.asyncio
-async def test_write_tool_is_queued_via_action_store_not_executed(scratchpad, action_store):
+async def test_write_tool_is_queued_via_action_store_not_executed(task_store, action_store):
     replies = [
         _tool_call("memory_set", {"key": "k", "value": "v"}),
         "final answer after queueing write",
@@ -181,8 +190,9 @@ async def test_write_tool_is_queued_via_action_store_not_executed(scratchpad, ac
         _base_messages(),
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
+        goal=GOAL,
         mcp=mcp,
-        scratchpad=scratchpad,
+        task_store=task_store,
         action_store=action_store,
         chat_fn=chat_fn,
     )
@@ -195,13 +205,12 @@ async def test_write_tool_is_queued_via_action_store_not_executed(scratchpad, ac
     assert pending[0].tool_name == "memory_set"
     assert pending[0].arguments == {"key": "k", "value": "v"}
 
-    entries = await scratchpad.list_by_session(PROJECT_ID, SESSION_ID)
-    stored = json.loads(entries[0].value)
-    assert "queued for human approval" in stored["result_or_error"]
+    task = await _get_only_task(task_store)
+    assert "queued for human approval" in task.steps[0].result_or_error
 
 
 @pytest.mark.asyncio
-async def test_malformed_json_does_not_crash(scratchpad, action_store):
+async def test_malformed_json_does_not_crash(task_store, action_store):
     replies = [
         "<<TOOL_CALL>>{not valid json<<END>>",
         "final answer after malformed call",
@@ -213,8 +222,9 @@ async def test_malformed_json_does_not_crash(scratchpad, action_store):
         _base_messages(),
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
+        goal=GOAL,
         mcp=mcp,
-        scratchpad=scratchpad,
+        task_store=task_store,
         action_store=action_store,
         chat_fn=chat_fn,
     )
@@ -222,13 +232,12 @@ async def test_malformed_json_does_not_crash(scratchpad, action_store):
     assert result.reply == "final answer after malformed call"
     mcp.call.assert_not_awaited()
 
-    entries = await scratchpad.list_by_session(PROJECT_ID, SESSION_ID)
-    stored = json.loads(entries[0].value)
-    assert "malformed" in stored["result_or_error"]
+    task = await _get_only_task(task_store)
+    assert "malformed" in task.steps[0].result_or_error
 
 
 @pytest.mark.asyncio
-async def test_mcp_error_during_tool_call_is_caught(scratchpad, action_store):
+async def test_mcp_error_during_tool_call_is_caught(task_store, action_store):
     replies = [
         _tool_call("web_search", {"query": "x"}),
         "final answer after mcp error",
@@ -241,14 +250,36 @@ async def test_mcp_error_during_tool_call_is_caught(scratchpad, action_store):
         _base_messages(),
         project_id=PROJECT_ID,
         session_id=SESSION_ID,
+        goal=GOAL,
         mcp=mcp,
-        scratchpad=scratchpad,
+        task_store=task_store,
         action_store=action_store,
         chat_fn=chat_fn,
     )
 
     assert result.reply == "final answer after mcp error"
 
-    entries = await scratchpad.list_by_session(PROJECT_ID, SESSION_ID)
-    stored = json.loads(entries[0].value)
-    assert "mcp-server unreachable" in stored["result_or_error"]
+    task = await _get_only_task(task_store)
+    assert "mcp-server unreachable" in task.steps[0].result_or_error
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_marks_task_failed_and_reraises(task_store, action_store):
+    chat_fn = AsyncMock(side_effect=RuntimeError("boom"))
+    mcp = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await run_research_loop(
+            _base_messages(),
+            project_id=PROJECT_ID,
+            session_id=SESSION_ID,
+            goal=GOAL,
+            mcp=mcp,
+            task_store=task_store,
+            action_store=action_store,
+            chat_fn=chat_fn,
+        )
+
+    task = await _get_only_task(task_store)
+    assert task.status == "failed"
+    assert task.error == "boom"

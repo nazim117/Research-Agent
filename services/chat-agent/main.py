@@ -61,8 +61,8 @@ from memory import ConversationStore
 from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
 from request_context import new_request_id, set_request_id
-from scratchpad import ScratchpadStore
 from semantic_cache import SemanticCacheStore, embed_cached
+from tasks import TaskStore
 from toolbox import ToolboxStore
 from transcript import (
     TranscriptStore,
@@ -82,7 +82,7 @@ document_state_store = DocumentStateStore(settings.sqlite_path)
 flashcard_store = FlashcardStore(settings.sqlite_path)
 toolbox_store = ToolboxStore(settings.sqlite_path)
 workflow_store = WorkflowStore(settings.sqlite_path)
-scratchpad_store = ScratchpadStore(settings.sqlite_path)
+task_store = TaskStore(settings.sqlite_path)
 semantic_cache_store = SemanticCacheStore(settings.sqlite_path)
 action_store = ActionStore(settings.sqlite_path)
 
@@ -168,7 +168,7 @@ async def lifespan(app: FastAPI):
     await flashcard_store.init()
     await toolbox_store.init()
     await workflow_store.init()
-    await scratchpad_store.init()
+    await task_store.init()
     await semantic_cache_store.init()
     await action_store.init()
 
@@ -440,11 +440,29 @@ class ActionOut(BaseModel):
     completed_at: str | None
 
 
-class ScratchpadEntryOut(BaseModel):
-    key: str
-    value: str
+class TaskStepOut(BaseModel):
+    step_order: int
+    tool_name: str | None
+    arguments: dict | None
+    result_or_error: str
+    created_at: str
+
+
+class TaskOut(BaseModel):
+    id: str
+    session_id: str
+    goal: str
+    status: str
+    reply: str | None
+    error: str | None
+    parent_task_id: str | None
     created_at: str
     updated_at: str
+    completed_at: str | None
+
+
+class TaskDetailOut(TaskOut):
+    steps: list[TaskStepOut]
 
 
 class BriefActionOut(BaseModel):
@@ -692,7 +710,7 @@ async def delete_project(project_id: str):
     Cascade:
       - SQLite:  projects row + messages rows   (ProjectStore.delete)
       - Qdrant:  conversations + documents points tagged with project_id
-      - SQLite:  transcript/entity/document_state/flashcards/toolbox/workflow/scratchpad rows
+      - SQLite:  transcript/entity/document_state/flashcards/toolbox/workflow/task rows
     """
     # Do the vector deletes first.  If ProjectStore.delete() succeeded but the
     # Qdrant delete failed, we'd be left with orphan vectors filtered on a
@@ -707,7 +725,7 @@ async def delete_project(project_id: str):
     await flashcard_store.delete_by_project(project_id)
     await toolbox_store.delete_by_project(project_id)
     await workflow_store.delete_by_project(project_id)
-    await scratchpad_store.delete_by_project(project_id)
+    await task_store.delete_by_project(project_id)
     await semantic_cache_store.delete_by_project(project_id)
     await action_store.delete_by_project(project_id)
 
@@ -1129,24 +1147,58 @@ async def reject_action(project_id: str, action_id: str) -> ActionOut:
     return _action_out(await action_store.get(action_id))
 
 
-@app.get("/projects/{project_id}/scratchpad", response_model=list[ScratchpadEntryOut])
-async def get_scratchpad(
-    project_id: str,
-    session_id: str = Query(..., description="Which conversation's scratchpad to read."),
-) -> list[ScratchpadEntryOut]:
-    """Read-only inspection of the deep-research scratchpad for a session.
+def _task_out(t) -> TaskOut:
+    return TaskOut(
+        id=t.id,
+        session_id=t.session_id,
+        goal=t.goal,
+        status=t.status,
+        reply=t.reply,
+        error=t.error,
+        parent_task_id=t.parent_task_id,
+        created_at=t.created_at,
+        updated_at=t.updated_at,
+        completed_at=t.completed_at,
+    )
 
-    Debuggability only — no create/update route, since only the loop itself
-    (deep_research.py) writes entries.
+
+@app.get("/projects/{project_id}/tasks", response_model=list[TaskOut])
+async def list_tasks(
+    project_id: str,
+    status: str | None = Query(None, description="Filter by status, e.g. 'running'."),
+    session_id: str | None = Query(None, description="Filter to one conversation."),
+) -> list[TaskOut]:
+    """List durable agent-task runs for a project, newest first.
+
+    Populated by deep_research.py's loop — one row per deep_research=true
+    /chat request, permanent (unlike the old scratchpad, which was wiped
+    each run). No create/update route — only the loop itself writes tasks.
     """
     await _require_project(project_id)
-    rows = await scratchpad_store.list_by_session(project_id, session_id)
-    return [
-        ScratchpadEntryOut(
-            key=r.key, value=r.value, created_at=r.created_at, updated_at=r.updated_at
-        )
-        for r in rows
-    ]
+    rows = await task_store.list_for_project(project_id, status=status, session_id=session_id)
+    return [_task_out(t) for t in rows]
+
+
+@app.get("/projects/{project_id}/tasks/{task_id}", response_model=TaskDetailOut)
+async def get_task(project_id: str, task_id: str) -> TaskDetailOut:
+    """Single task with its full ordered step history."""
+    await _require_project(project_id)
+    task = await task_store.get(task_id)
+    if task is None or task.project_id != project_id:
+        raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found.")
+    return TaskDetailOut(
+        **_task_out(task).model_dump(),
+        steps=[
+            TaskStepOut(
+                step_order=s.step_order,
+                tool_name=s.tool_name,
+                arguments=s.arguments,
+                result_or_error=s.result_or_error,
+                created_at=s.created_at,
+            )
+            for s in task.steps
+        ],
+    )
 
 
 def _flashcard_out(c) -> FlashcardOut:
@@ -1628,15 +1680,15 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     # tool-calling research loop (see deep_research.py). Backend and model
     # are fixed by deploy-time config either way.
     if req.deep_research:
-        # Fresh scratchpad per research task-invocation (see scratchpad.py
-        # header) — clear before this task's steps get written.
-        await scratchpad_store.clear_session(req.project_id, req.session_id)
+        # run_research_loop owns the whole agent_tasks lifecycle — creates
+        # the task row itself (status='running') before the first LLM call.
         research_result = await deep_research.run_research_loop(
             messages,
             project_id=req.project_id,
             session_id=req.session_id,
+            goal=req.message,
             mcp=_mcp,
-            scratchpad=scratchpad_store,
+            task_store=task_store,
             action_store=action_store,
             chat_fn=chat,
         )

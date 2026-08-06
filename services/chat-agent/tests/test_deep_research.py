@@ -3,7 +3,6 @@
 # FastAPI route via AsyncClient, module-level references in `main` patched
 # out so no real Qdrant/Ollama/SQLite/mcp-server is required.
 
-import json
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
@@ -40,7 +39,7 @@ def _common_patches():
 
 
 @pytest.mark.asyncio
-async def test_deep_research_end_to_end_runs_loop_and_writes_scratchpad():
+async def test_deep_research_end_to_end_runs_loop_and_writes_task():
     replies = [
         '<<TOOL_CALL>>{"tool": "web_search", "arguments": {"query": "x"}}<<END>>',
         "Final answer from research",
@@ -56,8 +55,15 @@ async def test_deep_research_end_to_end_runs_loop_and_writes_scratchpad():
         mock_mcp_call = stack.enter_context(
             patch("main._mcp.call", new_callable=AsyncMock, return_value={"results": ["hit"]})
         )
-        mock_clear = stack.enter_context(patch("main.scratchpad_store.clear_session", new_callable=AsyncMock))
-        mock_set_entry = stack.enter_context(patch("main.scratchpad_store.set_entry", new_callable=AsyncMock))
+        mock_create = stack.enter_context(
+            patch(
+                "main.task_store.create",
+                new_callable=AsyncMock,
+                return_value=type("T", (), {"id": "task-123"})(),
+            )
+        )
+        mock_add_step = stack.enter_context(patch("main.task_store.add_step", new_callable=AsyncMock))
+        mock_mark_done = stack.enter_context(patch("main.task_store.mark_done", new_callable=AsyncMock))
 
         from main import app
 
@@ -75,11 +81,10 @@ async def test_deep_research_end_to_end_runs_loop_and_writes_scratchpad():
     assert resp.status_code == 200
     assert resp.json()["reply"] == "Final answer from research"
 
-    mock_clear.assert_awaited_once_with(FAKE_PROJECT_ID, FAKE_SESSION_ID)
+    mock_create.assert_awaited_once_with(FAKE_PROJECT_ID, FAKE_SESSION_ID, "research something")
     mock_mcp_call.assert_awaited_once_with("web_search", {"query": "x"}, project_id=FAKE_PROJECT_ID)
-    mock_set_entry.assert_awaited_once()
-    step_value = json.loads(mock_set_entry.await_args.args[3])
-    assert step_value["tool"] == "web_search"
+    mock_add_step.assert_awaited_once_with("task-123", "web_search", {"query": "x"}, '{"results": ["hit"]}')
+    mock_mark_done.assert_awaited_once_with("task-123", "Final answer from research")
 
 
 @pytest.mark.asyncio
@@ -99,8 +104,15 @@ async def test_deep_research_write_tool_is_queued_not_executed():
         mock_mcp_call = stack.enter_context(
             patch("main._mcp.call", new_callable=AsyncMock, return_value={"results": ["hit"]})
         )
-        stack.enter_context(patch("main.scratchpad_store.clear_session", new_callable=AsyncMock))
-        stack.enter_context(patch("main.scratchpad_store.set_entry", new_callable=AsyncMock))
+        stack.enter_context(
+            patch(
+                "main.task_store.create",
+                new_callable=AsyncMock,
+                return_value=type("T", (), {"id": "task-123"})(),
+            )
+        )
+        stack.enter_context(patch("main.task_store.add_step", new_callable=AsyncMock))
+        stack.enter_context(patch("main.task_store.mark_done", new_callable=AsyncMock))
         mock_create_pending = stack.enter_context(
             patch("main.action_store.create_pending", new_callable=AsyncMock, return_value="action-123")
         )
@@ -136,7 +148,7 @@ async def test_deep_research_false_leaves_existing_behavior_unchanged():
         for cm in _common_patches():
             stack.enter_context(cm)
         mock_chat = stack.enter_context(patch("main.chat", side_effect=_spy_chat))
-        mock_clear = stack.enter_context(patch("main.scratchpad_store.clear_session", new_callable=AsyncMock))
+        mock_create = stack.enter_context(patch("main.task_store.create", new_callable=AsyncMock))
         mock_loop = stack.enter_context(patch("main.deep_research.run_research_loop", new_callable=AsyncMock))
 
         from main import app
@@ -154,5 +166,5 @@ async def test_deep_research_false_leaves_existing_behavior_unchanged():
     assert resp.status_code == 200
     assert resp.json()["reply"] == "plain reply"
     assert mock_chat.call_count == 1
-    mock_clear.assert_not_awaited()
+    mock_create.assert_not_awaited()
     mock_loop.assert_not_awaited()
