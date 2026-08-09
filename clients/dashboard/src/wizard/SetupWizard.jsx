@@ -18,7 +18,7 @@ const DEFAULT_PROGRESS = {
   step: 'welcome',
   completedSteps: [],
   health: null,
-  models: { chat: null },
+  models: { chat: null, provider: 'cloud', cloudConfigured: false },
   project: { name: '' },
 };
 
@@ -51,7 +51,9 @@ function isStepValid(step, progress) {
       return Boolean(progress.health) &&
         Object.values(progress.health).every((s) => s.status === 'ok' || !s.required);
     case 'models':
-      return Boolean(progress.models.chat);
+      return progress.models.provider === 'cloud'
+        ? Boolean(progress.models.cloudConfigured)
+        : Boolean(progress.models.chat);
     case 'project':
       return Boolean(progress.project.name.trim());
     default:
@@ -103,8 +105,8 @@ export default function SetupWizard({ onExit, onProjectCreated }) {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await api.createProject(progress.project.name.trim());
-      onProjectCreated?.();
+      const created = await api.createProject(progress.project.name.trim());
+      onProjectCreated?.(created);
       setProgress((p) => ({ ...p, completedSteps: STEPS, step: 'success' }));
       trySetItem(STATUS_KEY, 'completed');
     } catch (err) {

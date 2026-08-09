@@ -1246,6 +1246,11 @@ export default function App() {
     localStorage.setItem('projectId', id);
   }
 
+  async function handleWizardProjectCreated(project) {
+    await refreshProjects();
+    if (project?.id) selectProject(project.id);
+  }
+
   function handleLeftResizeEnd() {
     localStorage.setItem('leftPaneWidth', String(leftWidthRef.current));
     setResizingSide(null);
@@ -1303,7 +1308,7 @@ export default function App() {
       )}
 
       {showWizard && (
-        <SetupWizard onExit={handleWizardExit} onProjectCreated={refreshProjects} />
+        <SetupWizard onExit={handleWizardExit} onProjectCreated={handleWizardProjectCreated} />
       )}
 
       {showSettings && (

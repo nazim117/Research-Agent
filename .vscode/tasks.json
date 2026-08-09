@@ -4,7 +4,7 @@
     {
       "label": "chat-agent: run",
       "type": "shell",
-      "command": "${workspaceFolder}/services/chat-agent/.venv/Scripts/uvicorn.exe",
+      "command": "${workspaceFolder}/services/chat-agent/venv/bin/uvicorn",
       "args": ["main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"],
       "options": {
         "cwd": "${workspaceFolder}/services/chat-agent"
