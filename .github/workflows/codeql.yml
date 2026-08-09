@@ -33,11 +33,6 @@ jobs:
             build-mode: none
           - language: javascript-typescript
             build-mode: none
-          - language: go
-            # autobuild works for the go.work workspace. If it ever fails with
-            # "unable to automatically build", switch to build-mode: manual and
-            # add explicit `go build ./...` steps per module below.
-            build-mode: autobuild
           - language: actions
             # Analyzes the workflow YAML files themselves.
             build-mode: none

@@ -27,42 +27,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-python@v5
         with:
-          go-version: '1.25'
-          cache-dependency-path: services/mcp-server/go.sum
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/mcp-server/requirements.txt
 
-      - name: Download modules
-        run: go mod download
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff pip-audit
 
-      - name: Verify module checksums
-        run: go mod verify
+      - name: Lint with ruff
+        run: ruff check .
 
-      - name: Check formatting
-        # gofmt -l lists files that differ from canonical format; fail if any.
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "The following files are not gofmt-formatted:"
-            echo "$unformatted"
-            exit 1
-          fi
+      - name: Run tests
+        run: pytest tests/ -v
 
-      - name: go vet
-        run: go vet ./...
-
-      - name: Build
-        run: go build ./...
-
-      - name: Run tests (race detector)
-        run: go test ./... -race -v
-
-      - name: govulncheck
-        # Call-graph-aware Go vulnerability check. Catches CVEs that
-        # only matter if the vulnerable code path is actually reachable.
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+      - name: pip-audit
+        # Catches known CVEs in the resolved dependency tree.
+        run: pip-audit
 
   docker-build:
     runs-on: ubuntu-latest

@@ -4,9 +4,9 @@
 #   1. Copy .env.example -> .env if it doesn't exist yet (every var has a
 #      working default; this just gives you a file to edit later).
 #   2. Start the Docker-based infra: qdrant, embeddings, searxng, mcp-server.
-#      (mcp-server runs in Docker here for zero-Go-toolchain convenience --
-#      if you're actively developing mcp-server itself, run it natively via
-#      "go run ./cmd/server" instead, same as the VS Code "Run All" task.)
+#      (mcp-server runs in Docker here for convenience -- if you're actively
+#      developing mcp-server itself, run it natively via "python main.py"
+#      instead, same as the VS Code "Run All" task.)
 #   3. Start chat-agent natively in its own window (hot reload via --reload).
 #   4. Start the dashboard natively in its own window (hot reload via Vite).
 #

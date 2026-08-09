@@ -17,7 +17,7 @@ services:
       - PORT=8083
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       # Bundled, no-API-key web search backend — takes precedence over Brave
-      # when set (see internal/tools/web.go's dispatch order).
+      # when set (see services/mcp-server/tools/web.py's dispatch order).
       - SEARXNG_BASE_URL=http://searxng:8080
     depends_on:
       - searxng
@@ -106,7 +106,7 @@ services:
     restart: unless-stopped
 
   # searxng — self-hosted meta-search engine, the default web_search backend
-  # for the agent (see internal/tools/web.go). No API key, no per-query cost,
+  # for the agent (see services/mcp-server/tools/web.py). No API key, no per-query cost,
   # unlike Brave — fits an open-source project's "just works" bar better.
   # The mounted settings.yml enables JSON output, which is off by default
   # (queries would otherwise 403) — see docker/searxng/settings.yml.

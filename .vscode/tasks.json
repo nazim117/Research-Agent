@@ -20,8 +20,8 @@
     {
       "label": "mcp-server: run",
       "type": "shell",
-      "command": "go",
-      "args": ["run", "./cmd/server"],
+      "command": "${workspaceFolder}/services/mcp-server/venv/bin/python",
+      "args": ["main.py"],
       "options": {
         "cwd": "${workspaceFolder}/services/mcp-server"
       },

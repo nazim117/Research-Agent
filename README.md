@@ -6,8 +6,9 @@ transcripts, and retrieves relevant context with RAG in a private project
 knowledge base.
 
 The current active architecture is centered on the FastAPI `chat-agent`
-service, backed by the Go `mcp-server` for web search and other outbound
-tool calls. The original "cost-aware AI agent execution engine" that this
+service, backed by the Python `mcp-server` (a real MCP server, built on the
+official Python MCP SDK) for web search and other outbound tool calls. The
+original "cost-aware AI agent execution engine" that this
 repository started as (`agent-executor`, `policy-engine`, `gateway`) has been
 removed; it is not part of the active Research Agent runtime.
 
@@ -42,7 +43,7 @@ flowchart LR
   ChatAgent --> Embeddings["Embeddings service (TEI) :8082"]
   ChatAgent --> Ollama["Ollama chat (optional, local)"]
   ChatAgent --> LLM["Cloud chat provider (optional)"]
-  ChatAgent --> MCP["Go mcp-server :8083"]
+  ChatAgent --> MCP["mcp-server (MCP) :8083"]
   MCP --> SearXNG["SearXNG web search :8085"]
   ChatAgent --> Web["YouTube/Wikipedia/URLs"]
 ```
@@ -56,7 +57,7 @@ natively for hot reload during development (see [Quick Start](#quick-start)):
 | Container | Path | Responsibility |
 |---|---|---|
 | chat-agent | `services/chat-agent/` | FastAPI backend for projects, chat, RAG, memory, and transcript processing |
-| mcp-server | `services/mcp-server/` | Go service that holds vendor credentials (e.g. Brave Search) and proxies outbound tool calls — chat-agent calls this, never the vendor APIs directly |
+| mcp-server | `services/mcp-server/` | Python MCP server (official MCP SDK) that holds vendor credentials (e.g. Brave Search) and proxies outbound tool calls — chat-agent calls this, never the vendor APIs directly |
 | qdrant | Docker image `qdrant/qdrant` | Vector database for conversation and document embeddings |
 | embeddings | Docker image `ghcr.io/huggingface/text-embeddings-inference` | Bundled, purpose-built embedding server (BAAI/bge-base-en-v1.5) — always used for RAG/memory, regardless of which chat provider is active |
 | searxng | Docker image `searxng/searxng` | Self-hosted web search backend for the agent's optional web-search toggle — no API key required |
@@ -80,14 +81,15 @@ services/
     transcript.py           Transcript extraction and structured SQLite storage
     briefing.py             Project briefing assembler
     extractors.py           File, audio, YouTube, Wikipedia, and generic URL extraction
-    mcp_client.py           HTTP client for the mcp-server tool-call API
+    mcp_client.py           MCP client for mcp-server's tool calls
     request_context.py      Per-request correlation id (contextvar)
     tests/                  pytest coverage for core backend behaviour
 
   mcp-server/
-    cmd/server/main.go      Entry point
-    internal/mcp/           Tool-call HTTP server (GET /tools, POST /tools/call)
-    internal/tools/         web.go, files.go, memory.go, http.go — one file per tool integration
+    main.py                 Entry point (TRANSPORT=stdio or Streamable HTTP)
+    server.py                Auto-discovery loader — registers every tools/*.py and admin/*.py module
+    tools/                   memory.py, web.py, files.py, http_request.py — one file per tool, auto-registered
+    admin/                   health.py, config_env.py, metrics.py — non-MCP routes for the dashboard
 
 clients/
   dashboard/
@@ -369,7 +371,8 @@ mcp-server tests:
 
 ```bash
 cd services/mcp-server
-go build ./... && go vet ./... && gofmt -l . && go test ./... -v
+pip install -r requirements.txt
+ruff check . && pytest tests/ -v
 ```
 
 Dashboard lint:
@@ -381,7 +384,7 @@ npm run lint
 
 ## Known Implementation Notes
 
-- `mcp-server` (Go, port 8083) is an **active** dependency — `chat-agent` routes
+- `mcp-server` (Python, port 8083) is an **active** dependency — `chat-agent` routes
   web search and other outbound tool calls through it. Always start it
   alongside Qdrant.
 - `clients/dashboard/vite.config.js` proxies `/api` to `localhost:8080` for
@@ -414,7 +417,7 @@ npm run lint
 Research Agent is the entire scope of this repository:
 
 - FastAPI chat-agent
-- Go mcp-server (web search gateway, and other outbound tool calls)
+- Python mcp-server (MCP web search gateway, and other outbound tool calls)
 - SQLite project and memory storage
 - Qdrant RAG/vector memory
 - Bundled embeddings service (Hugging Face Text Embeddings Inference)

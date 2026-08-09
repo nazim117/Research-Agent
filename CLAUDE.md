@@ -5,19 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 **Research Agent** — a local-first AI assistant for project managers. It keeps
-project-scoped memory, ingests documents/transcripts, retrieves context with
-RAG, and syncs Jira/GitHub work items into a private per-project knowledge
-base. The repo name ("Cost-aware AI Agent execution engine") reflects an
-earlier project; that original execution-engine architecture (`gateway`,
-`policy-engine`, `agent-executor`) has been removed from the repo. The active
-system is the stack described below.
+project-scoped memory, ingests documents/transcripts, and retrieves context
+with RAG in a private per-project knowledge base. The repo name ("Cost-aware
+AI Agent execution engine") reflects an earlier project; that original
+execution-engine architecture (`gateway`, `policy-engine`, `agent-executor`)
+has been removed from the repo. The active system is the stack described
+below.
 
 ## Active stack
 
 | Component | Path | Language | Port |
 |---|---|---|---|
 | chat-agent | `services/chat-agent/` | Python / FastAPI | 8080 |
-| mcp-server | `services/mcp-server/` | Go | 8083 |
+| mcp-server | `services/mcp-server/` | Python (official MCP SDK) | 8083 |
 | qdrant | Docker image `qdrant/qdrant` | — | 6333 |
 | embeddings | Docker image `ghcr.io/huggingface/text-embeddings-inference` | — | 8082 |
 | searxng | Docker image `searxng/searxng` | — | 8085 |
@@ -58,16 +58,27 @@ mcp-server) and call `pytest.skip()` via fixtures in `tests/conftest.py`
 (`qdrant_up`, `ollama_up`, etc.) when that dependency isn't reachable, so
 `pytest` stays green without any infra running.
 
-### mcp-server (Go)
+### mcp-server (Python)
 
 ```bash
 cd services/mcp-server
-go build ./...
-go vet ./...
-gofmt -l .            # CI fails if this lists any files
-go test ./... -race -v
-go test ./internal/mcp/... -run TestName -v   # single test
+python -m venv venv && venv\Scripts\activate      # venv/bin/activate on macOS/Linux
+pip install -r requirements.txt
+
+python main.py                                     # run the service (Streamable HTTP on :8083)
+TRANSPORT=stdio python main.py                      # run as a stdio MCP server (Claude Code/Desktop)
+
+ruff check .                                        # lint
+
+pytest tests/ -v                                     # all tests
+pytest tests/test_tools_web.py -v                    # single file
 ```
+
+Tools live one-per-concern under `tools/` (`memory.py`, `web.py`, `files.py`,
+`http_request.py`); `server.py`'s `build_mcp()` auto-discovers and registers
+every module in `tools/` and `admin/` at startup (each module defines a
+`register(mcp)` function) — adding a new tool is a new file in `tools/`, not
+an edit to a central registry.
 
 ### dashboard (React)
 
@@ -85,21 +96,21 @@ npm run test:e2e:ui
 
 ```bash
 cp .env.example .env                                    # first time only; every var has a working default
-docker compose up qdrant embeddings searxng mcp-server -d  # start what's needed; mcp-server holds Jira/GitHub creds
+docker compose up qdrant embeddings searxng mcp-server -d  # start what's needed; mcp-server holds web-search creds (e.g. Brave)
 ollama pull llama3                                       # only if LLM_PROVIDER=ollama (embeddings need no pull — TEI handles its own model)
 ```
 
 ## Architecture
 
-### Credential boundary: mcp-server is the only thing that talks to Jira/GitHub
+### Credential boundary: mcp-server is the only thing that talks to vendor APIs
 
-`chat-agent` never holds `JIRA_*` / `GITHUB_TOKEN` credentials directly (see
-the note in `services/chat-agent/config.py`) — those fields exist only so a
-shared `.env` doesn't break pydantic-settings' `extra="ignore"` parsing. All
-vendor API calls go through `services/chat-agent/mcp_client.py` →
-`services/mcp-server` (`internal/tools/jira.go`, `internal/tools/github.go`),
-which is the only process that reads those secrets. When touching sync,
-actions, or PM integrations, this boundary should stay intact.
+`chat-agent` never holds outbound-tool credentials directly — today that's
+just `BRAVE_SEARCH_API_KEY` (see `services/mcp-server/env_vars.py`'s
+allowlist). All vendor API calls go through
+`services/chat-agent/mcp_client.py` → `services/mcp-server`, a real MCP
+server, which is the only process that reads those secrets. When adding a
+new outbound integration, this boundary should stay intact — the vendor
+credential lives in mcp-server's env allowlist, never in chat-agent.
 
 ### Project isolation
 
@@ -118,32 +129,24 @@ data across projects.
    service — Hugging Face Text Embeddings Inference, `EMBEDDINGS_BASE_URL`,
    not Ollama) and search Qdrant `conversations` (memory) and `documents`
    (RAG), both filtered by `project_id`.
-3. If the message names a Jira/GitHub key explicitly (regex match), pin those
-   chunks by exact source label in addition to semantic search — semantic
-   search alone misses action-oriented queries like "comment on KAN-8".
-4. If the request has `web_search: true` (a UI toggle — the LLM never decides
+3. If the request has `web_search: true` (a UI toggle — the LLM never decides
    this itself), call mcp-server's `web_search` tool and fold results into
    the prompt as another citation-numbered context block, same mechanism as
    doc chunks. Degrades gracefully (a note in the prompt, not a 500) if the
    search backend is unreachable.
-5. Build the prompt (doc chunks → web results → memory hits → recent history
+4. Build the prompt (doc chunks → web results → memory hits → recent history
    → user message) and call the configured LLM backend (`llm.py`: `ollama`
    or `openai_compatible`, fixed by the `LLM_PROVIDER` env var at deploy
    time — `openai_compatible` covers OpenAI, Claude via Anthropic's own
    OpenAI-compatible endpoint, Grok, Groq, DeepSeek, or any other
    OpenAI-compatible API, distinguished only by `OPENAI_BASE_URL`).
-6. If the reply contains a `<<DRAFT_ACTION>>{...}<<END>>` block, parse it and
-   create a pending row in `actions.py` instead of executing anything —
-   external writes always require human approval via
-   `POST /actions/{id}/approve`, which calls through `mcp_client.py`.
 
 ### Settings & Setup Wizard (`clients/dashboard/src/settings/`, `clients/dashboard/src/wizard/`)
 
 The dashboard has a first-run Setup Wizard and an ongoing Settings page, both
 backed by real endpoints (not stubs) added to `main.py`: `GET /health/detailed`,
 `GET /models` + `POST /models/pull` (Ollama model management), `GET /config`
-(read-only effective LLM/embeddings config, never secrets), `GET /integrations/status`
-(Jira/GitHub configured state, proxied from mcp-server), and `GET`/`PUT
+(read-only effective LLM/embeddings config, never secrets), and `GET`/`PUT
 /config/env[/​{key}]` (env var read/write). The env-var endpoints are
 **write-only for secrets** — a value is never echoed back, only
 `configured: bool` + a masked hint — and are origin-checked
@@ -152,20 +155,12 @@ general CORS policy is deliberately wide open (needed for the Chrome
 extension's ever-changing origin) and can't be used to gate credential
 routes. `services/chat-agent/env_config.py` holds chat-agent's own
 allowlisted vars (`LLM_PROVIDER`, `OLLAMA_*`, `OPENAI_*`); mcp-server's
-equivalent (`internal/tools/registry.go`'s `envVarAllowlist`) holds
-`JIRA_*`/`GITHUB_TOKEN`/`BRAVE_SEARCH_API_KEY`/`SEARXNG_BASE_URL` — chat-agent
-proxies writes to mcp-server for those, never storing them itself. Fake
+equivalent (`services/mcp-server/env_vars.py`'s `ENV_VAR_ALLOWLIST`) holds
+`BRAVE_SEARCH_API_KEY`/`SEARXNG_BASE_URL` — chat-agent proxies writes to
+mcp-server for those, never storing them itself. Fake
 "Fix"/service-restart/connection-test affordances were deliberately removed
 from this UI rather than left stubbed — every remaining action in
 Settings/Wizard does something real.
-
-### Sync pipeline (`sync.py`)
-
-`POST /projects/{id}/sync` walks each `external_refs` entry
-(`jira_project_key` / `github_repo`), fetches items through `mcp_client.py`
-(list, then hydrate each item individually), deletes any existing Qdrant
-chunks for that source, and re-ingests via `rag.py`. `sync_state` tracks
-`last_synced_at` per ref so repeat syncs are incremental.
 
 ### Transcript pipeline (`transcript.py`)
 
@@ -181,29 +176,34 @@ transcript replaces rather than duplicates.
 `projects.py` (SQLite project store + schema version gate), `memory.py`
 (conversation history), `vectors.py` (Qdrant wrapper + project filtering),
 `embeddings.py`, `rag.py` (chunk/ingest/retrieve), `llm.py` (provider
-dispatch), `sync.py`, `actions.py` (approval lifecycle), `transcript.py`,
-`briefing.py` / `standup.py` (LLM-generated summaries), `extractors.py`
-(file/audio/YouTube/Wikipedia/URL text extraction), `mcp_client.py` (the only
-HTTP client that talks to mcp-server).
+dispatch), `transcript.py`, `briefing.py` / `standup.py` (LLM-generated
+summaries), `extractors.py` (file/audio/YouTube/Wikipedia/URL text
+extraction), `mcp_client.py` (the only client that talks to mcp-server —
+a real MCP client for tool calls, plain httpx for the admin-only routes).
 
 ### mcp-server (`services/mcp-server/`)
 
-Thin Go HTTP service: `GET /tools` lists tool definitions, `POST
-/tools/call` dispatches by name (`internal/tools/registry.go`). Each vendor
-integration (`jira.go`, `github.go`, `web.go`, `files.go`, `memory.go`) is a
-self-contained tool implementation. `web.go`'s `web_search` dispatches to
-SearXNG (if `SEARXNG_BASE_URL` set) → Brave (if `BRAVE_SEARCH_API_KEY` set) →
-scraping `lite.duckduckgo.com` as a last resort — SearXNG is the bundled
-default (see `docker-compose.yml`'s `searxng` service). It still has its own
-independent OTEL tracing setup (`internal/observability/`) — this is separate
-from and unrelated to chat-agent, which has no tracing/metrics
-instrumentation.
+A real Python MCP server built on the official MCP SDK
+(`mcp.server.fastmcp.FastMCP`), served over both stdio (for external MCP
+clients like Claude Code/Desktop) and Streamable HTTP on :8083 (for
+chat-agent/Docker Compose) — both transports share the same tool registry.
+`server.py`'s `build_mcp()` auto-discovers and registers every module under
+`tools/` and `admin/` (each defines a `register(mcp)` function) — no manual
+switch statement, no manual JSON-schema literals; tool schemas are derived
+from typed function signatures + docstrings. Tool modules: `memory.py`,
+`web.py`, `files.py`, `http_request.py`. `admin/` holds non-MCP routes the
+dashboard depends on (`health.py`, `config_env.py`, `metrics.py`), registered
+via the same `register(mcp)` convention using FastMCP's `custom_route`.
+`web.py`'s `web_search` dispatches to SearXNG (if `SEARXNG_BASE_URL` set) →
+Brave (if `BRAVE_SEARCH_API_KEY` set) → scraping `lite.duckduckgo.com` as a
+last resort — SearXNG is the bundled default (see `docker-compose.yml`'s
+`searxng` service). It has its own independent OTEL tracing + Prometheus
+metrics setup (`observability/`) — this is separate from and unrelated to
+chat-agent, which has no tracing/metrics instrumentation.
 
 ## Known implementation gaps
 
 - `briefing.py` does a best-effort RAG lookup against a `VectorStore`
   interface that doesn't fully match the current `vectors.py` API; structured
-  briefing data (decisions/actions/risks) still works correctly.
-- The extension has UI for retrying failed actions, but
-  `POST /actions/{action_id}/retry` is not implemented server-side.
+  briefing data (decisions/action items/risks) still works correctly.
 - Google Drive ingestion is not implemented.
