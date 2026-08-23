@@ -2,9 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import * as api from './api.js';
 import {
-  IconX, IconSettings, IconRefresh, IconUpload, IconLoader,
-  IconSearch, IconBook, IconBot, IconClipboard, IconSun, IconCheck, IconAlert,
-  IconTrash, IconChevronLeft, IconChevronRight,
+  IconX, IconSettings, IconUpload, IconLoader,
+  IconSearch, IconBook, IconBot, IconTrash,
 } from './icons.jsx';
 import SetupWizard, { STATUS_KEY as WIZARD_STATUS_KEY } from './wizard/SetupWizard.jsx';
 import SettingsPage from './settings/SettingsPage.jsx';
@@ -230,7 +229,6 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [sources, setSources] = useState([]);
-  const [flashcardSourceBusy, setFlashcardSourceBusy] = useState(null);
 
   useEffect(() => {
     if (!projectId) { setSources([]); return; }
@@ -252,10 +250,7 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
     setBusy(true);
     try {
       const res = await api.ingestFile(projectId, file, kind);
-      const extras = kind === 'transcript'
-        ? ` · ${res.decisions} decisions, ${res.action_items} actions, ${res.risks} risks`
-        : '';
-      setToast({ message: `Ingested ${res.chunks} chunks from "${file.name}"${extras}.` });
+      setToast({ message: `Ingested ${res.chunks} chunks from "${file.name}".` });
       onSourcesChange();
     } catch (err) {
       setToast({ message: `Upload failed: ${err.message}` });
@@ -271,10 +266,7 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
     setBusy(true);
     try {
       const res = await api.ingestUrl(projectId, trimmed, kind);
-      const extras = kind === 'transcript'
-        ? ` · ${res.decisions} decisions, ${res.action_items} actions, ${res.risks} risks`
-        : '';
-      setToast({ message: `Ingested ${res.chunks} chunks from URL${extras}.` });
+      setToast({ message: `Ingested ${res.chunks} chunks from URL.` });
       setUrl('');
       onSourcesChange();
     } catch (err) {
@@ -293,22 +285,9 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
     }
   }
 
-  async function handleGenerateFlashcards(s) {
-    if (flashcardSourceBusy) return;
-    setFlashcardSourceBusy(s.source);
-    try {
-      const created = await api.generateFlashcards(projectId, s.source);
-      setToast({ message: `Generated ${created.length} flashcard(s) from "${s.source}" — see the Flashcards tab.` });
-    } catch (err) {
-      setToast({ message: `Flashcard generation failed: ${err.message}` });
-    } finally {
-      setFlashcardSourceBusy(null);
-    }
-  }
-
   async function handleDeleteSource(s) {
     if (!window.confirm(
-      `Delete "${s.source}"? This removes its ${s.chunks} chunk(s) and any extracted decisions/action items/risks.`
+      `Delete "${s.source}"? This removes its ${s.chunks} chunk(s).`
     )) return;
     try {
       await api.deleteSource(projectId, s.source);
@@ -399,16 +378,6 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
                 <button
                   type="button"
                   className="source-delete-btn"
-                  onClick={() => handleGenerateFlashcards(s)}
-                  disabled={flashcardSourceBusy === s.source}
-                  title={`Generate flashcards from "${s.source}"`}
-                  data-testid="source-generate-flashcards-btn"
-                >
-                  {flashcardSourceBusy === s.source ? <IconLoader className="spin" /> : <IconBook />}
-                </button>
-                <button
-                  type="button"
-                  className="source-delete-btn"
                   onClick={() => handleDeleteSource(s)}
                   title={`Delete "${s.source}"`}
                   data-testid="source-delete-btn"
@@ -429,7 +398,7 @@ function LeftPane({ projectId, sourcesKey, onSourcesChange, setToast }) {
 
 const CHAT_SESSION_ID = 'default';
 
-function ChatPane({ projectId }) {
+function ChatPane({ projectId, onCitationsChange }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -437,12 +406,14 @@ function ChatPane({ projectId }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
+    onCitationsChange([]);
     if (!projectId) { setMessages([]); return; }
     let cancelled = false;
     api.getHistory(projectId, CHAT_SESSION_ID)
       .then(history => { if (!cancelled) setMessages(history ?? []); })
       .catch(() => { if (!cancelled) setMessages([]); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   useEffect(() => {
@@ -458,6 +429,7 @@ function ChatPane({ projectId }) {
     try {
       const res = await api.chat(projectId, CHAT_SESSION_ID, text, webSearchEnabled);
       setMessages(prev => [...prev, { role: 'assistant', content: res.reply, citations: res.citations ?? [] }]);
+      onCitationsChange(res.citations ?? []);
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: `⚠ Error: ${err.message}` }]);
     } finally {
@@ -495,22 +467,6 @@ function ChatPane({ projectId }) {
               <div className="prose">
                 <ReactMarkdown>{m.content}</ReactMarkdown>
               </div>
-              {m.citations?.length > 0 && (
-                <details className="sources-panel" data-testid="citations">
-                  <summary className="sources-summary">Sources ({m.citations.length})</summary>
-                  <ul className="sources-list">
-                    {m.citations.map(c => (
-                      <li key={c.ref} className="sources-item" data-testid="citation-item">
-                        {c.source.startsWith('http') ? (
-                          <>[{c.ref}] <a href={c.source} target="_blank" rel="noreferrer">{c.source}</a></>
-                        ) : (
-                          <>[{c.ref}] {c.source} · chunk {c.chunk_index}</>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
             </div>
           </div>
         ))}
@@ -562,585 +518,37 @@ function ChatPane({ projectId }) {
 }
 
 // ─── Studio pane ───────────────────────────────────────────────────────────
+//
+// Shows the sources (citations) behind the most recent chat answer — lifted
+// up from ChatPane via onCitationsChange (see App) rather than rendered
+// inline under each message, so the reader can keep it in view alongside
+// the conversation instead of expanding a details block per message.
 
-const STUDIO_TABS = [
-  { label: 'Briefing', Icon: IconClipboard },
-  { label: 'Standup', Icon: IconSun },
-  { label: 'Decisions', Icon: IconCheck },
-  { label: 'Risks', Icon: IconAlert },
-  { label: 'Flashcards', Icon: IconBook },
-];
-
-// One card from a snapshotted review-session queue — front, "See answer"
-// link, then reveal the back and rate Wrong/Correct (maps to SM-2 quality
-// 1/4 under the hood — see StudioPane's handleRateFlashcard). Prev/Next are
-// pure navigation within the queue, no rating side effect. Keyed by card.id
-// by the caller so `revealed` resets automatically on navigation.
-function FlashcardReview({ card, index, total, tally, onRate, onPrev, onNext, canGoPrev, canGoNext }) {
-  const [revealed, setRevealed] = useState(false);
-
-  return (
-    <div>
-      <div className="flashcard-counter">{index + 1}/{total}</div>
-      <div className="flashcard">
-        <div className="flashcard-source">{card.source}</div>
-        <div className="flashcard-front">{card.front}</div>
-        {revealed ? (
-          <div className="flashcard-back">{card.back}</div>
-        ) : (
-          <button type="button" className="flashcard-reveal-link" onClick={() => setRevealed(true)}>
-            See answer
-          </button>
-        )}
-      </div>
-      <div className="flashcard-nav">
-        <button
-          type="button"
-          className="flashcard-nav-btn"
-          onClick={onPrev}
-          disabled={!canGoPrev}
-          aria-label="Previous card"
-        >
-          <IconChevronLeft />
-        </button>
-        <button
-          type="button"
-          className="flashcard-nav-btn wrong"
-          onClick={() => onRate(card, true)}
-          disabled={!revealed}
-          aria-label="Wrong"
-        >
-          <IconX /> {tally.wrong}
-        </button>
-        <button
-          type="button"
-          className="flashcard-nav-btn correct"
-          onClick={() => onRate(card, false)}
-          disabled={!revealed}
-          aria-label="Correct"
-        >
-          <IconCheck /> {tally.correct}
-        </button>
-        <button
-          type="button"
-          className="flashcard-nav-btn"
-          onClick={onNext}
-          disabled={!canGoNext}
-          aria-label="Next card"
-        >
-          <IconChevronRight />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ProgressRing({ percent, size = 132, stroke = 10 }) {
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (percent / 100) * circumference;
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
-      <circle
-        cx={size / 2} cy={size / 2} r={radius} fill="none"
-        strokeWidth={stroke} className="flashcard-ring-bg"
-      />
-      <circle
-        cx={size / 2} cy={size / 2} r={radius} fill="none"
-        strokeWidth={stroke} strokeLinecap="round" className="flashcard-ring-fg"
-        strokeDasharray={circumference} strokeDashoffset={offset}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-    </svg>
-  );
-}
-
-function formatElapsed(ms) {
-  const totalSecs = Math.round(ms / 1000);
-  const mins = Math.floor(totalSecs / 60);
-  const secs = totalSecs % 60;
-  return mins > 0 ? `${mins} min${mins === 1 ? '' : 's'} ${secs} sec${secs === 1 ? '' : 's'}` : `${secs} sec${secs === 1 ? '' : 's'}`;
-}
-
-// End-of-session summary — shown once the review queue is exhausted.
-// reviewLog/tally/elapsedMs are all session-scoped (see StudioPane's
-// snapshotReviewQueue) — nothing here is persisted beyond the SM-2 fields
-// already saved per-card as each rating happened.
-function FlashcardSessionSummary({ tally, reviewLog, elapsedMs }) {
-  const [showReport, setShowReport] = useState(false);
-  const total = tally.correct + tally.wrong;
-  const percent = total > 0 ? Math.round((tally.correct / total) * 100) : 0;
-
-  return (
-    <div className="flashcard-summary">
-      <div className="flashcard-summary-title">Nicely done! 🎉</div>
-      <div className="flashcard-summary-card">
-        <div className="flashcard-ring-wrap">
-          <ProgressRing percent={percent} />
-          <div className="flashcard-ring-label">
-            <div className="flashcard-ring-score">{tally.correct}/{total}</div>
-            <div className="flashcard-ring-percent">{percent}%</div>
-            <div className="flashcard-ring-time">{formatElapsed(elapsedMs)}</div>
-          </div>
-        </div>
-        <div className="flashcard-summary-stats">
-          <div className="flashcard-summary-stat">
-            <span>Got it</span>
-            <strong className="correct">{tally.correct}</strong>
-          </div>
-          <div className="flashcard-summary-stat">
-            <span>Missed it</span>
-            <strong className="wrong">{tally.wrong}</strong>
-          </div>
-        </div>
-      </div>
-
-      <button className="btn btn-primary mt-12" onClick={() => setShowReport(v => !v)}>
-        {showReport ? 'Hide full report' : 'See full report'}
-      </button>
-
-      {showReport && (
-        <div className="transcript-results mt-12">
-          {reviewLog.map((entry, i) => (
-            <div
-              key={i}
-              className={`transcript-item flashcard-report-item ${entry.wrong ? 'wrong' : 'correct'}`}
-            >
-              <div className="transcript-meta">
-                {entry.wrong ? <><IconX /> Missed it</> : <><IconCheck /> Got it</>}
-              </div>
-              <div className="transcript-text"><strong>Q:</strong> {entry.card.front}</div>
-              <div className="transcript-text"><strong>A:</strong> {entry.card.back}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// A single row in "browse all cards" mode — inline edit, no modal.
-function FlashcardItem({ card, onUpdate, onDelete }) {
-  const [editing, setEditing] = useState(false);
-  const [front, setFront] = useState(card.front);
-  const [back, setBack] = useState(card.back);
-
-  if (editing) {
-    return (
-      <div className="transcript-item">
-        <div className="transcript-meta">{card.source}</div>
-        <textarea className="input" rows={2} value={front} onChange={e => setFront(e.target.value)} />
-        <textarea className="input mt-8" rows={2} value={back} onChange={e => setBack(e.target.value)} />
-        <div className="row-gap-sm mt-8">
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => { onUpdate(card.id, front, back); setEditing(false); }}
-          >
-            Save
-          </button>
-          <button
-            className="btn btn-secondary btn-sm"
-            onClick={() => { setFront(card.front); setBack(card.back); setEditing(false); }}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="transcript-item">
-      <div className="transcript-meta">{card.source}</div>
-      <div className="transcript-text"><strong>Q:</strong> {card.front}</div>
-      <div className="transcript-text"><strong>A:</strong> {card.back}</div>
-      <div className="row-gap-sm mt-8">
-        <button className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}>Edit</button>
-        <button className="btn btn-secondary btn-sm" onClick={() => onDelete(card.id)}><IconTrash /></button>
-      </div>
-    </div>
-  );
-}
-
-function StudioPane({ projectId, setToast }) {
-  const [tab, setTab] = useState(() => {
-    const saved = localStorage.getItem('studioTab');
-    return saved !== null ? +saved : 0;
-  });
-  const [briefing, setBriefing] = useState(null);
-  const [briefingLoading, setBriefingLoading] = useState(false);
-  const [standup, setStandup] = useState(null);
-  const [standupLoading, setStandupLoading] = useState(false);
-  const [decisions, setDecisions] = useState([]);
-  const [risks, setRisks] = useState([]);
-  const [flashcards, setFlashcards] = useState([]);
-  const [flashcardsBrowseMode, setFlashcardsBrowseMode] = useState(false);
-  const [reviewQueue, setReviewQueue] = useState([]);
-  const [reviewIndex, setReviewIndex] = useState(0);
-  const [reviewTally, setReviewTally] = useState({ wrong: 0, correct: 0 });
-  const [reviewLog, setReviewLog] = useState([]); // [{ card, wrong }] in review order, this session
-  const [reviewStartedAt, setReviewStartedAt] = useState(null);
-  const [reviewEndedAt, setReviewEndedAt] = useState(null);
-
-  function selectTab(i) {
-    setTab(i);
-    localStorage.setItem('studioTab', String(i));
-  }
-
-  useEffect(() => {
-    if (!projectId) { setBriefing(null); setStandup(null); return; }
-  }, [projectId]);
-
-  useEffect(() => {
-    if (!projectId) { setDecisions([]); setRisks([]); setFlashcards([]); return; }
-    api.listDecisions(projectId).then(setDecisions).catch(() => setDecisions([]));
-    api.listRisks(projectId).then(setRisks).catch(() => setRisks([]));
-    loadFlashcards();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-
-  // Snapshotting the queue is an explicit action (initial load, tab click,
-  // Refresh, or switching back from browse mode) — NOT a reaction to
-  // `flashcards` changing, because rating a card also updates `flashcards`
-  // (so browse mode stays in sync), which would otherwise re-trigger this
-  // and wipe the in-progress counter/tally/log back to zero every review.
-  function snapshotReviewQueue(list) {
-    setReviewQueue(list.filter(c => new Date(c.due_at) <= new Date()));
-    setReviewIndex(0);
-    setReviewTally({ wrong: 0, correct: 0 });
-    setReviewLog([]);
-    setReviewStartedAt(Date.now());
-    setReviewEndedAt(null);
-  }
-
-  function loadFlashcards() {
-    if (!projectId) { setFlashcards([]); snapshotReviewQueue([]); return; }
-    api.listFlashcards(projectId).then(rows => {
-      setFlashcards(rows);
-      snapshotReviewQueue(rows);
-    }).catch(() => setFlashcards([]));
-  }
-
-  function toggleFlashcardsBrowseMode() {
-    setFlashcardsBrowseMode(v => {
-      const next = !v;
-      if (!next) snapshotReviewQueue(flashcards); // switching back to review mode
-      return next;
-    });
-  }
-
-  function goPrevFlashcard() {
-    setReviewIndex(i => Math.max(0, i - 1));
-  }
-
-  function goNextFlashcard() {
-    setReviewIndex(i => {
-      const next = Math.min(reviewQueue.length, i + 1);
-      if (next === reviewQueue.length) setReviewEndedAt(Date.now());
-      return next;
-    });
-  }
-
-  async function handleRateFlashcard(card, wrong) {
-    try {
-      const updated = await api.reviewFlashcard(card.id, wrong ? 1 : 4);
-      setFlashcards(prev => prev.map(c => (c.id === card.id ? updated : c)));
-      setReviewTally(t => (wrong ? { ...t, wrong: t.wrong + 1 } : { ...t, correct: t.correct + 1 }));
-      setReviewLog(prev => [...prev, { card, wrong }]);
-      setReviewIndex(i => {
-        const next = Math.min(reviewQueue.length, i + 1);
-        if (next === reviewQueue.length) setReviewEndedAt(Date.now());
-        return next;
-      });
-    } catch (err) {
-      setToast({ message: `Review failed: ${err.message}` });
-    }
-  }
-
-  async function handleUpdateFlashcard(cardId, front, back) {
-    try {
-      const updated = await api.updateFlashcard(cardId, front, back);
-      setFlashcards(prev => prev.map(c => (c.id === cardId ? updated : c)));
-    } catch (err) {
-      setToast({ message: `Update failed: ${err.message}` });
-    }
-  }
-
-  async function handleDeleteFlashcard(cardId) {
-    if (!window.confirm('Delete this flashcard?')) return;
-    try {
-      await api.deleteFlashcard(cardId);
-      setFlashcards(prev => prev.filter(c => c.id !== cardId));
-    } catch (err) {
-      setToast({ message: `Delete failed: ${err.message}` });
-    }
-  }
-
-  const remainingDue = Math.max(reviewQueue.length - reviewIndex, 0);
-
-  async function loadBriefing() {
-    if (!projectId || briefingLoading) return;
-    setBriefingLoading(true);
-    try {
-      const b = await api.getBriefing(projectId);
-      setBriefing(b);
-    } catch (err) {
-      setToast({ message: `Briefing failed: ${err.message}` });
-    } finally {
-      setBriefingLoading(false);
-    }
-  }
-
-  async function loadStandup() {
-    if (!projectId || standupLoading) return;
-    setStandupLoading(true);
-    try {
-      const s = await api.getStandup(projectId);
-      setStandup(s);
-    } catch (err) {
-      setToast({ message: `Standup failed: ${err.message}` });
-    } finally {
-      setStandupLoading(false);
-    }
-  }
-
+function StudioPane({ projectId, citations }) {
   if (!projectId) return <aside className="studio-pane" />;
 
   return (
     <aside className="studio-pane">
-      <div className="studio-tabs">
-        {STUDIO_TABS.map((tabInfo, i) => {
-          const { label, Icon } = tabInfo;
-          return (
-          <button
-            key={label}
-            className={`studio-tab ${tab === i ? 'active' : ''}`}
-            onClick={() => {
-              selectTab(i);
-              if (i === 0 && !briefing) loadBriefing();
-              if (i === 1 && !standup) loadStandup();
-              if (i === 5) loadFlashcards();
-            }}
-          >
-            <Icon /> {label}
-            {i === 5 && remainingDue > 0 && (
-              <span className="section-badge ml-4">{remainingDue}</span>
-            )}
-          </button>
-          );
-        })}
-      </div>
-
+      <div className="studio-header"><IconBook /> Sources</div>
       <div className="studio-scroll">
-
-        {tab === 0 && (
-          <div>
-            {!briefing && !briefingLoading && (
-              <button className="btn btn-secondary btn-block" onClick={loadBriefing}>
-                Generate Briefing
-              </button>
-            )}
-            {briefingLoading && <p className="no-data">Generating…</p>}
-            {briefing && (
-              <div>
-                <div className="briefing-summary">{briefing.summary}</div>
-
-                {briefing.open_actions.length > 0 && (
-                  <details className="briefing-section" open>
-                    <summary>Open Actions ({briefing.open_actions.length})</summary>
-                    {briefing.open_actions.map(a => (
-                      <div key={a.id} className="briefing-item">
-                        <span className="briefing-item-text">{a.text}</span>
-                        {a.owner && <span className="briefing-item-meta">@{a.owner}</span>}
-                        {a.due_date && <span className="briefing-item-due">due {a.due_date}</span>}
-                      </div>
-                    ))}
-                  </details>
+        {citations.length === 0 ? (
+          <p className="no-data">
+            No sources yet — ask something that draws on this project's
+            ingested documents.
+          </p>
+        ) : (
+          <ul className="sources-list" data-testid="citations">
+            {citations.map(c => (
+              <li key={c.ref} className="sources-item" data-testid="citation-item">
+                {c.source.startsWith('http') ? (
+                  <>[{c.ref}] <a href={c.source} target="_blank" rel="noreferrer">{c.source}</a></>
+                ) : (
+                  <>[{c.ref}] {c.source} · chunk {c.chunk_index}</>
                 )}
-
-                {briefing.recent_decisions.length > 0 && (
-                  <details className="briefing-section">
-                    <summary>Recent Decisions ({briefing.recent_decisions.length})</summary>
-                    {briefing.recent_decisions.map(d => (
-                      <div key={d.id} className="briefing-item">
-                        <span className="briefing-item-text">{d.text}</span>
-                        <span className="briefing-item-meta">{d.source}</span>
-                      </div>
-                    ))}
-                  </details>
-                )}
-
-                {briefing.active_risks.length > 0 && (
-                  <details className="briefing-section">
-                    <summary>Active Risks ({briefing.active_risks.length})</summary>
-                    {briefing.active_risks.map(r => (
-                      <div key={r.id} className="briefing-item">
-                        <span className="briefing-item-text">{r.text}</span>
-                        <span className="briefing-item-meta">{r.source}</span>
-                      </div>
-                    ))}
-                  </details>
-                )}
-
-                <div className="briefing-meta">Generated: {new Date(briefing.generated_at).toLocaleString()}</div>
-                <button
-                  className="btn btn-secondary btn-sm mt-12"
-                  onClick={() => { setBriefing(null); loadBriefing(); }}
-                >
-                  Refresh
-                </button>
-              </div>
-            )}
-          </div>
+              </li>
+            ))}
+          </ul>
         )}
-
-        {tab === 1 && (
-          <div>
-            {!standup && !standupLoading && (
-              <button className="btn btn-secondary btn-block" onClick={loadStandup}>
-                Generate Standup
-              </button>
-            )}
-            {standupLoading && <p className="no-data">Generating…</p>}
-            {standup && (
-              <div>
-                <div className="briefing-summary">{standup.summary}</div>
-
-                {standup.done.length > 0 && (
-                  <details className="briefing-section" open>
-                    <summary>Done ({standup.done.length})</summary>
-                    {standup.done.map((item, i) => (
-                      <div key={i} className="briefing-item">
-                        <span className="briefing-item-text">{item}</span>
-                      </div>
-                    ))}
-                  </details>
-                )}
-
-                {standup.today.length > 0 && (
-                  <details className="briefing-section" open>
-                    <summary>Today / Next ({standup.today.length})</summary>
-                    {standup.today.map((item, i) => (
-                      <div key={i} className="briefing-item">
-                        <span className="briefing-item-text">{item}</span>
-                      </div>
-                    ))}
-                  </details>
-                )}
-
-                {standup.blockers.length > 0 && (
-                  <details className="briefing-section" open>
-                    <summary>Blockers ({standup.blockers.length})</summary>
-                    {standup.blockers.map((item, i) => (
-                      <div key={i} className="briefing-item">
-                        <span className="briefing-item-text">{item}</span>
-                      </div>
-                    ))}
-                  </details>
-                )}
-
-                {standup.done.length === 0 && standup.today.length === 0 && standup.blockers.length === 0 && (
-                  <p className="no-data">Nothing logged in the last 24h.</p>
-                )}
-
-                <div className="briefing-meta">Generated: {new Date(standup.generated_at).toLocaleString()}</div>
-                <button
-                  className="btn btn-secondary btn-sm mt-12"
-                  onClick={() => { setStandup(null); loadStandup(); }}
-                >
-                  Refresh
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 2 && (
-          <div className="transcript-results">
-            {decisions.length === 0 ? (
-              <p className="no-data">No decisions extracted yet.</p>
-            ) : (
-              decisions.map(d => (
-                <div key={d.id} className="transcript-item">
-                  <div className="transcript-meta">{d.source}</div>
-                  <div className="transcript-text">{d.text}</div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {tab === 3 && (
-          <div className="transcript-results">
-            {risks.length === 0 ? (
-              <p className="no-data">No risks extracted yet.</p>
-            ) : (
-              risks.map(r => (
-                <div key={r.id} className="transcript-item">
-                  <div className="transcript-meta">{r.source}</div>
-                  <div className="transcript-text">{r.text}</div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {tab === 5 && (
-          <div>
-            <div className="row-gap-sm mb-8">
-              <button className="btn btn-secondary btn-sm" onClick={loadFlashcards}>
-                <IconRefresh /> Refresh
-              </button>
-              {flashcards.length > 0 && (
-                <button
-                  className="btn btn-secondary btn-sm"
-                  onClick={toggleFlashcardsBrowseMode}
-                >
-                  {flashcardsBrowseMode ? 'Review due cards' : 'Browse all cards'}
-                </button>
-              )}
-            </div>
-
-            {flashcards.length === 0 ? (
-              <p className="no-data">
-                No flashcards yet — generate some from a source in the left panel.
-              </p>
-            ) : !flashcardsBrowseMode && reviewQueue.length === 0 ? (
-              <p className="no-data">No cards due right now — nice work. Check back later, or browse all cards below.</p>
-            ) : !flashcardsBrowseMode && reviewIndex >= reviewQueue.length ? (
-              <FlashcardSessionSummary
-                tally={reviewTally}
-                reviewLog={reviewLog}
-                elapsedMs={Math.max((reviewEndedAt ?? Date.now()) - (reviewStartedAt ?? Date.now()), 0)}
-              />
-            ) : !flashcardsBrowseMode ? (
-              <FlashcardReview
-                key={reviewQueue[reviewIndex].id}
-                card={reviewQueue[reviewIndex]}
-                index={reviewIndex}
-                total={reviewQueue.length}
-                tally={reviewTally}
-                onRate={handleRateFlashcard}
-                onPrev={goPrevFlashcard}
-                onNext={goNextFlashcard}
-                canGoPrev={reviewIndex > 0}
-                canGoNext={reviewIndex < reviewQueue.length}
-              />
-            ) : (
-              <div className="transcript-results">
-                {flashcards.map(c => (
-                  <FlashcardItem
-                    key={c.id}
-                    card={c}
-                    onUpdate={handleUpdateFlashcard}
-                    onDelete={handleDeleteFlashcard}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
       </div>
     </aside>
   );
@@ -1205,6 +613,7 @@ export default function App() {
   });
   const [toast, setToast] = useState(null);
   const [sourcesKey, setSourcesKey] = useState(0);
+  const [latestCitations, setLatestCitations] = useState([]);
 
   const [showWizard, setShowWizard] = useState(() => localStorage.getItem(WIZARD_STATUS_KEY) === null);
   const [onboardingStatus, setOnboardingStatus] = useState(() => localStorage.getItem(WIZARD_STATUS_KEY));
@@ -1287,6 +696,7 @@ export default function App() {
       />
       <ChatPane
         projectId={activeId}
+        onCitationsChange={setLatestCitations}
       />
       <PaneResizer
         side="right"
@@ -1296,7 +706,7 @@ export default function App() {
       />
       <StudioPane
         projectId={activeId}
-        setToast={setToast}
+        citations={latestCitations}
       />
 
       {toast && (

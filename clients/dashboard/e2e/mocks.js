@@ -40,22 +40,6 @@ export const FIXTURES = {
   sources: [{ source: 'https://example.com/doc', chunks: 4 }],
 
   ingestUrl: { chunks: 4, source: 'https://example.com/doc' },
-
-  briefing: {
-    summary: 'Project is on track.',
-    open_actions: [],
-    recent_decisions: [],
-    active_risks: [],
-    generated_at: '2026-01-01T00:00:00',
-  },
-
-  standup: {
-    summary: 'On track.',
-    done: ['Deployed v1'],
-    today: ['Fix tests'],
-    blockers: [],
-    generated_at: '2026-01-01T00:00:00',
-  },
 };
 
 // ─── Route dispatcher ─────────────────────────────────────────────────────────
@@ -65,8 +49,7 @@ export const FIXTURES = {
  *
  * @param {import('@playwright/test').Page} page
  * @param {Object} overrides  Per-endpoint response overrides keyed by name:
- *   { projects, chat, sources, ingestUrl,
- *     decisions, risks, briefing, standup }
+ *   { projects, chat, sources, ingestUrl }
  *   Each value replaces the entire default response body for that endpoint.
  */
 export async function mockApi(page, overrides = {}) {
@@ -117,28 +100,12 @@ export async function mockApi(page, overrides = {}) {
       return respond(overrides.ingestFile ?? FIXTURES.ingestUrl);
     }
     if (method === 'POST' && /\/ingest\/transcript$/.test(path)) {
-      return respond(overrides.ingestTranscript ?? { chunks: 2, decisions: 1, action_items: 0, risks: 0 });
+      return respond(overrides.ingestTranscript ?? { chunks: 2 });
     }
     if (method === 'POST' && path === '/ingest') {
       return respond(overrides.ingest ?? FIXTURES.ingestUrl);
     }
 
-    // ── Studio data ───────────────────────────────────────────────────────────
-    if (method === 'GET' && /\/decisions$/.test(path)) {
-      return respond(overrides.decisions ?? []);
-    }
-    if (method === 'GET' && /\/risks$/.test(path)) {
-      return respond(overrides.risks ?? []);
-    }
-    if (method === 'GET' && /\/action-items$/.test(path)) {
-      return respond(overrides.actionItems ?? []);
-    }
-    if (method === 'GET' && /\/briefing$/.test(path)) {
-      return respond(overrides.briefing ?? FIXTURES.briefing);
-    }
-    if (method === 'GET' && /\/standup$/.test(path)) {
-      return respond(overrides.standup ?? FIXTURES.standup);
-    }
     if (method === 'GET' && path === '/memory/search') {
       return respond(overrides.memorySearch ?? { results: [] });
     }

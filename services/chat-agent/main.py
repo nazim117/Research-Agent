@@ -25,6 +25,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import aiosqlite
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -46,14 +47,7 @@ from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
 import rag
 from request_context import set_request_id, new_request_id
-from transcript import (
-    TranscriptStore,
-    extract_structured,
-)
-from flashcards import FlashcardStore, generate_candidates, schedule_review
 from vectors import VectorStore
-import briefing
-import standup
 from extractors import extract_file, extract_url
 
 logger = logging.getLogger("uvicorn.error")
@@ -61,9 +55,7 @@ logger = logging.getLogger("uvicorn.error")
 project_store = ProjectStore(settings.sqlite_path)
 store = ConversationStore(settings.sqlite_path)
 vstore = VectorStore(url=settings.qdrant_url)
-transcript_store = TranscriptStore(settings.sqlite_path)
 document_state_store = DocumentStateStore(settings.sqlite_path)
-flashcard_store = FlashcardStore(settings.sqlite_path)
 
 # Shared MCPClient — the gateway to mcp-server's tools (web search, etc.).
 # Credentials (e.g. BRAVE_SEARCH_API_KEY) live on the mcp-server; this
@@ -120,6 +112,19 @@ def _looks_like_refusal(text: str) -> bool:
     return any(m in low for m in _REFUSAL_MARKERS)
 
 
+async def _drop_removed_feature_tables() -> None:
+    """One-time cleanup for the removed briefing/standup/decisions/
+    action_items/risks/flashcards feature set (replaced by the Sources
+    panel showing chat citations). Deliberately separate from the
+    SCHEMA_VERSION wipe below — that mechanism also wipes conversation
+    history, which has nothing to do with this cleanup. DROP TABLE IF
+    EXISTS is idempotent — a cheap no-op on every startup after the first."""
+    async with aiosqlite.connect(settings.sqlite_path) as db:
+        for table in ("decisions", "action_items", "risks", "flashcards"):
+            await db.execute(f"DROP TABLE IF EXISTS {table}")
+        await db.commit()
+
+
 # Lifespan — startup initialisation + one-time schema wipe.
 
 @asynccontextmanager
@@ -151,11 +156,10 @@ async def lifespan(app: FastAPI):
         await vstore.ensure_collection(settings.qdrant_collection, dim=EMBED_DIM)
         await vstore.ensure_collection(settings.qdrant_docs_collection, dim=EMBED_DIM)
 
-    # TranscriptStore and DocumentStateStore tables are always safe to
-    # create — no schema coupling to the version wipe above.
-    await transcript_store.init()
+    # DocumentStateStore's table is always safe to create — no schema
+    # coupling to the version wipe above.
     await document_state_store.init()
-    await flashcard_store.init()
+    await _drop_removed_feature_tables()
 
     # Fail fast if the LLM configuration is incomplete — better to refuse to
     # start than to discover a missing API key on the first real user request.
@@ -294,104 +298,6 @@ class IngestRequest(BaseModel):
 
 class IngestResponse(BaseModel):
     chunks: int  # How many chunks were stored in Qdrant.
-
-
-class IngestTranscriptRequest(BaseModel):
-    project_id: str  # Which project brain owns this transcript.
-    source: str  # Label for the meeting (e.g. "meeting-2026-05-12").
-    text: str  # Raw transcript text.
-
-
-class IngestTranscriptResponse(BaseModel):
-    chunks: int  # RAG chunks stored in Qdrant.
-    decisions: int  # Structured decisions extracted + stored.
-    action_items: int  # Structured action items extracted + stored.
-    risks: int  # Structured risks extracted + stored.
-
-
-class DecisionOut(BaseModel):
-    id: str
-    source: str
-    text: str
-    created_at: str
-
-
-class ActionItemOut(BaseModel):
-    id: str
-    source: str
-    owner: str | None
-    text: str
-    due_date: str | None
-    status: str
-    created_at: str
-
-
-class RiskOut(BaseModel):
-    id: str
-    source: str
-    text: str
-    created_at: str
-
-
-class FlashcardOut(BaseModel):
-    id: str
-    source: str
-    front: str
-    back: str
-    ease_factor: float
-    interval_days: int
-    repetitions: int
-    due_at: str
-    last_reviewed_at: str | None
-    created_at: str
-
-
-class FlashcardReviewRequest(BaseModel):
-    quality: int = Field(..., ge=0, le=5, description="0=Again, 3=Hard, 4=Good, 5=Easy")
-
-
-class FlashcardUpdateRequest(BaseModel):
-    front: str = Field(..., min_length=1)
-    back: str = Field(..., min_length=1)
-
-
-class BriefActionOut(BaseModel):
-    id: str
-    text: str
-    owner: str | None
-    due_date: str | None
-    status: str
-    source: str
-
-
-class BriefDecisionOut(BaseModel):
-    id: str
-    text: str
-    source: str
-    created_at: str
-
-
-class BriefRiskOut(BaseModel):
-    id: str
-    text: str
-    source: str
-    created_at: str
-
-
-class BriefingOut(BaseModel):
-    summary: str
-    open_actions: list[BriefActionOut]
-    recent_decisions: list[BriefDecisionOut]
-    active_risks: list[BriefRiskOut]
-    generated_at: str
-
-
-class StandupOut(BaseModel):
-    summary: str
-    done: list[str]
-    today: list[str]
-    blockers: list[str]
-    generated_at: str
 
 
 class SourceOut(BaseModel):
@@ -608,9 +514,7 @@ async def delete_project(project_id: str):
     # user can retry.
     await vstore.delete_by_project(settings.qdrant_collection, project_id)
     await vstore.delete_by_project(settings.qdrant_docs_collection, project_id)
-    await transcript_store.delete_by_project(project_id)
     await document_state_store.delete_by_project(project_id)
-    await flashcard_store.delete_by_project(project_id)
 
     deleted = await project_store.delete(project_id)
     if not deleted:
@@ -643,71 +547,43 @@ async def post_ingest(req: IngestRequest) -> IngestResponse:
 
 async def _process_transcript(
     project_id: str, source: str, text: str
-) -> IngestTranscriptResponse:
-    """Run the two-phase transcript pipeline and return the response model.
+) -> IngestResponse:
+    """Chunk, embed, and store transcript text in Qdrant, replacing any prior
+    content for this source.
 
-    Shared by /ingest/transcript, /ingest/file?kind=transcript, and
-    /ingest/url?kind=transcript so they all behave identically.
+    Unlike plain /ingest, transcript sources are idempotently replaced on
+    re-post rather than accumulated — re-uploading a meeting transcript
+    after edits shouldn't duplicate chunks. Shared by /ingest/transcript,
+    /ingest/file?kind=transcript, and /ingest/url?kind=transcript so they
+    all behave identically.
     """
-    # Phase 1 — delete old vector chunks for this source, then re-ingest.
     await vstore.delete_by_source(
         settings.qdrant_docs_collection, project_id, source
     )
     chunk_count = await rag.ingest(project_id, source, text, vstore)
-
-    # Phase 2 — delete old structured rows, then re-extract.
-    await transcript_store.delete_by_source(project_id, source)
-    try:
-        extracted = await extract_structured(text, chat)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Structured extraction failed: {exc}",
-        ) from exc
-
-    counts = await transcript_store.save_extracted(project_id, source, extracted)
-    logger.info(
-        "Transcript[%s] source=%r: %d chunks, %d decisions, %d action_items, %d risks",
-        project_id,
-        source,
-        chunk_count,
-        counts["decisions"],
-        counts["action_items"],
-        counts["risks"],
-    )
-    return IngestTranscriptResponse(
-        chunks=chunk_count,
-        decisions=counts["decisions"],
-        action_items=counts["action_items"],
-        risks=counts["risks"],
-    )
+    return IngestResponse(chunks=chunk_count)
 
 
-@app.post("/ingest/transcript", response_model=IngestTranscriptResponse)
-async def post_ingest_transcript(
-    req: IngestTranscriptRequest,
-) -> IngestTranscriptResponse:
+@app.post("/ingest/transcript", response_model=IngestResponse)
+async def post_ingest_transcript(req: IngestRequest) -> IngestResponse:
     """Pasted-text transcript ingest. See _process_transcript for behaviour."""
     await _require_project(req.project_id)
     return await _process_transcript(req.project_id, req.source, req.text)
 
 
-@app.post("/ingest/file", response_model=IngestTranscriptResponse)
+@app.post("/ingest/file", response_model=IngestResponse)
 async def post_ingest_file(
     project_id: str = Form(...),
     kind: str = Form("document"),
     file: UploadFile = File(...),
-) -> IngestTranscriptResponse:
+) -> IngestResponse:
     """Upload a file and ingest its extracted text.
 
     Form fields:
         project_id: Which project brain owns this content.
-        kind:       "document" (chunk + embed only) or "transcript"
-                    (also extract decisions / action items / risks).
+        kind:       "document" (chunk + embed only) or "transcript" (chunk +
+                    embed, replacing any prior content for this source).
         file:       The uploaded file. Source label is the original filename.
-
-    Always returns IngestTranscriptResponse so the frontend gets a uniform
-    shape; for documents the decisions / action_items / risks fields are 0.
     """
     await _require_project(project_id)
     if kind not in {"document", "transcript"}:
@@ -724,9 +600,7 @@ async def post_ingest_file(
         return await _process_transcript(project_id, source, text)
 
     chunks = await rag.ingest(project_id, source, text, vstore)
-    return IngestTranscriptResponse(
-        chunks=chunks, decisions=0, action_items=0, risks=0
-    )
+    return IngestResponse(chunks=chunks)
 
 
 class IngestUrlRequest(BaseModel):
@@ -735,8 +609,8 @@ class IngestUrlRequest(BaseModel):
     kind: str = "document"  # "document" or "transcript"
 
 
-@app.post("/ingest/url", response_model=IngestTranscriptResponse)
-async def post_ingest_url(req: IngestUrlRequest) -> IngestTranscriptResponse:
+@app.post("/ingest/url", response_model=IngestResponse)
+async def post_ingest_url(req: IngestUrlRequest) -> IngestResponse:
     """Fetch and ingest content at a URL.
 
     Routes by hostname:
@@ -756,193 +630,7 @@ async def post_ingest_url(req: IngestUrlRequest) -> IngestTranscriptResponse:
         return await _process_transcript(req.project_id, source, text)
 
     chunks = await rag.ingest(req.project_id, source, text, vstore)
-    return IngestTranscriptResponse(
-        chunks=chunks, decisions=0, action_items=0, risks=0
-    )
-
-
-@app.get("/projects/{project_id}/decisions", response_model=list[DecisionOut])
-async def get_decisions(project_id: str) -> list[DecisionOut]:
-    """List all decisions extracted from transcripts for this project, newest first."""
-    await _require_project(project_id)
-    rows = await transcript_store.list_decisions(project_id)
-    return [
-        DecisionOut(id=r.id, source=r.source, text=r.text, created_at=r.created_at)
-        for r in rows
-    ]
-
-
-@app.get("/projects/{project_id}/action-items", response_model=list[ActionItemOut])
-async def get_action_items(
-    project_id: str,
-    status: str | None = Query(None, description="Filter by status: 'open' or 'done'."),
-) -> list[ActionItemOut]:
-    """List transcript action items. Pass ?status=open to see only open items."""
-    await _require_project(project_id)
-    if status and status not in ("open", "done"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid status {status!r}. Use 'open' or 'done'.",
-        )
-    rows = await transcript_store.list_action_items(project_id, status=status)
-    return [
-        ActionItemOut(
-            id=r.id,
-            source=r.source,
-            owner=r.owner,
-            text=r.text,
-            due_date=r.due_date,
-            status=r.status,
-            created_at=r.created_at,
-        )
-        for r in rows
-    ]
-
-
-@app.get("/projects/{project_id}/risks", response_model=list[RiskOut])
-async def get_risks(project_id: str) -> list[RiskOut]:
-    """List all risks extracted from transcripts for this project, newest first."""
-    await _require_project(project_id)
-    rows = await transcript_store.list_risks(project_id)
-    return [
-        RiskOut(id=r.id, source=r.source, text=r.text, created_at=r.created_at)
-        for r in rows
-    ]
-
-
-def _flashcard_out(c) -> FlashcardOut:
-    return FlashcardOut(
-        id=c.id, source=c.source, front=c.front, back=c.back,
-        ease_factor=c.ease_factor, interval_days=c.interval_days,
-        repetitions=c.repetitions, due_at=c.due_at,
-        last_reviewed_at=c.last_reviewed_at, created_at=c.created_at,
-    )
-
-
-@app.post(
-    "/projects/{project_id}/sources/{source}/flashcards/generate",
-    response_model=list[FlashcardOut],
-)
-async def generate_flashcards_for_source(project_id: str, source: str) -> list[FlashcardOut]:
-    """Generate flashcards from an already-ingested source's full text.
-
-    Additive only — re-running this for a source you've already generated
-    cards for adds more candidates, it never touches or replaces existing
-    cards (which may have real spaced-repetition progress). Remove a card
-    you don't want via DELETE /flashcards/{id} instead.
-    """
-    await _require_project(project_id)
-    chunks = await rag.retrieve_by_source(project_id, source, vstore)
-    if not chunks:
-        raise HTTPException(status_code=404, detail=f"No ingested content found for source {source!r}")
-    text = "".join(c.text for c in sorted(chunks, key=lambda c: c.chunk_index))
-
-    try:
-        candidates = await generate_candidates(text, chat)
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    created = await flashcard_store.save_generated(project_id, source, candidates)
-    return [_flashcard_out(c) for c in created]
-
-
-@app.get("/projects/{project_id}/flashcards", response_model=list[FlashcardOut])
-async def list_flashcards(project_id: str) -> list[FlashcardOut]:
-    """List all flashcards for a project, soonest-due first."""
-    await _require_project(project_id)
-    rows = await flashcard_store.list_by_project(project_id)
-    return [_flashcard_out(c) for c in rows]
-
-
-@app.post("/flashcards/{card_id}/review", response_model=FlashcardOut)
-async def review_flashcard(card_id: str, req: FlashcardReviewRequest) -> FlashcardOut:
-    """Record a review and reschedule the card's next due date via SM-2."""
-    card = await flashcard_store.get(card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Flashcard not found")
-    fields = schedule_review(
-        card.ease_factor, card.interval_days, card.repetitions, req.quality,
-    )
-    await flashcard_store.update_review(card_id, fields)
-    updated = await flashcard_store.get(card_id)
-    return _flashcard_out(updated)
-
-
-@app.patch("/flashcards/{card_id}", response_model=FlashcardOut)
-async def update_flashcard(card_id: str, req: FlashcardUpdateRequest) -> FlashcardOut:
-    """Manually correct a generated card's front/back text."""
-    card = await flashcard_store.get(card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Flashcard not found")
-    await flashcard_store.update_text(card_id, req.front, req.back)
-    updated = await flashcard_store.get(card_id)
-    return _flashcard_out(updated)
-
-
-@app.delete("/flashcards/{card_id}")
-async def delete_flashcard(card_id: str):
-    card = await flashcard_store.get(card_id)
-    if not card:
-        raise HTTPException(status_code=404, detail="Flashcard not found")
-    await flashcard_store.delete(card_id)
-    return {"deleted": True}
-
-
-@app.get("/projects/{project_id}/briefing", response_model=BriefingOut)
-async def get_briefing(project_id: str) -> BriefingOut:
-    """Return a concise status snapshot for the project: open actions, recent decisions, active risks, and an AI-generated summary."""
-    await _require_project(project_id)
-
-    b = await briefing.assemble_briefing(
-        project_id=project_id,
-        transcript_store=transcript_store,
-        vector_store=vstore,
-        chat_fn=chat,
-    )
-
-    return BriefingOut(
-        summary=b.summary,
-        open_actions=[
-            BriefActionOut(
-                id=a.id,
-                text=a.text,
-                owner=a.owner,
-                due_date=a.due_date,
-                status=a.status,
-                source=a.source,
-            )
-            for a in b.open_actions
-        ],
-        recent_decisions=[
-            BriefDecisionOut(
-                id=d.id, text=d.text, source=d.source, created_at=d.created_at
-            )
-            for d in b.recent_decisions
-        ],
-        active_risks=[
-            BriefRiskOut(id=r.id, text=r.text, source=r.source, created_at=r.created_at)
-            for r in b.active_risks
-        ],
-        generated_at=b.generated_at,
-    )
-
-
-@app.get("/projects/{project_id}/standup", response_model=StandupOut)
-async def get_standup(project_id: str) -> StandupOut:
-    """Daily Yesterday/Today/Blockers standup for the project, scoped to the last 24h."""
-    await _require_project(project_id)
-    s = await standup.assemble_standup(
-        project_id=project_id,
-        transcript_store=transcript_store,
-        chat_fn=chat,
-    )
-    return StandupOut(
-        summary=s.summary,
-        done=s.done,
-        today=s.today,
-        blockers=s.blockers,
-        generated_at=s.generated_at,
-    )
+    return IngestResponse(chunks=chunks)
 
 
 @app.get("/projects/{project_id}/sources", response_model=list[SourceOut])
@@ -979,15 +667,11 @@ async def delete_source(project_id: str, source: str):
 
     Cascade:
       - Qdrant:  all chunks tagged with this project_id + source
-      - SQLite:  any transcript-derived decisions/action_items/risks and any
-                 generated flashcards for this source, and any stored
-                 enabled/disabled state
+      - SQLite:  any stored enabled/disabled state
     """
     await _require_project(project_id)
     await vstore.delete_by_source(settings.qdrant_docs_collection, project_id, source)
-    await transcript_store.delete_by_source(project_id, source)
     await document_state_store.delete_by_source(project_id, source)
-    await flashcard_store.delete_by_source(project_id, source)
     logger.info("Deleted source %r from project %s", source, project_id)
     return {"deleted": True}
 

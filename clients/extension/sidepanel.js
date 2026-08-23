@@ -219,39 +219,6 @@ async function sendMessage() {
     return;
   }
 
-  // Handle /briefing slash command (Step 11)
-  if (message === "/briefing") {
-    inputEl.value = "";
-    setBusy(true);
-    setStatus("Loading briefing…");
-    try {
-      const response = await fetch(`${AGENT_URL}/projects/${currentProjectId}/briefing`);
-      if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      const b = await response.json();
-      appendBubble("assistant", `📋 **Project Briefing**\n\n${b.summary}`);
-      if (b.open_actions.length > 0) {
-        const actionsList = b.open_actions.map(a => `• ${a.text}${a.owner ? ` (@${a.owner})` : ''}${a.due_date ? ` due ${a.due_date}` : ''}`).join('\n');
-        appendBubble("assistant", `**Open Actions:**\n${actionsList}`);
-      }
-      if (b.recent_decisions.length > 0) {
-        const decisionsList = b.recent_decisions.map(d => `• ${d.text}`).join('\n');
-        appendBubble("assistant", `**Recent Decisions:**\n${decisionsList}`);
-      }
-      if (b.active_risks.length > 0) {
-        const risksList = b.active_risks.map(r => `• ${r.text}`).join('\n');
-        appendBubble("assistant", `**Active Risks:**\n${risksList}`);
-      }
-      setStatus("");
-    } catch (err) {
-      appendBubble("assistant", `⚠ Briefing failed: ${err.message}`);
-      setStatus("Make sure the chat-agent server is running on port 8080.");
-    } finally {
-      setBusy(false);
-      inputEl.focus();
-    }
-    return;
-  }
-
   const sessionId = sessionByProject[currentProjectId];
 
   inputEl.value = "";
@@ -410,7 +377,7 @@ async function handleTranscriptSubmit() {
     }
 
     const data = await response.json();
-    setStatus(`✓ Processed — ${data.decisions} decisions, ${data.action_items} actions, ${data.risks} risks`);
+    setStatus(`✓ Ingested — ${data.chunks} chunks`);
   } catch (err) {
     setStatus(`⚠ Process failed: ${err.message}`);
   } finally {

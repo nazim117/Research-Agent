@@ -29,23 +29,9 @@ export const getHistory = (projectId, sessionId = 'default') =>
 export const memorySearch = (projectId, q, k = 5) =>
   request('GET', `/memory/search?project_id=${encodeURIComponent(projectId)}&q=${encodeURIComponent(q)}&k=${k}`);
 
-// Step 10: Transcript processing
+// Transcript processing (chunk + embed for RAG; no structured extraction)
 export const ingestTranscript = (projectId, source, text) =>
   request('POST', '/ingest/transcript', { project_id: projectId, source, text });
-
-export const listDecisions = (projectId) =>
-  request('GET', `/projects/${projectId}/decisions`);
-
-export const listRisks = (projectId) =>
-  request('GET', `/projects/${projectId}/risks`);
-
-// Step 11: Project briefing
-export const getBriefing = (projectId) =>
-  request('GET', `/projects/${projectId}/briefing`);
-
-// Standup: daily Yesterday/Today/Blockers view
-export const getStandup = (projectId) =>
-  request('GET', `/projects/${projectId}/standup`);
 
 export const listSources = (projectId) =>
   request('GET', `/projects/${projectId}/sources`);
@@ -55,23 +41,6 @@ export const setSourceEnabled = (projectId, source, enabled) =>
 
 export const deleteSource = (projectId, source) =>
   request('DELETE', `/projects/${projectId}/sources/${encodeURIComponent(source)}`);
-
-// Flashcards + spaced repetition (issue #61). Generating is additive — it
-// never touches or replaces cards already generated for a source.
-export const generateFlashcards = (projectId, source) =>
-  request('POST', `/projects/${projectId}/sources/${encodeURIComponent(source)}/flashcards/generate`);
-
-export const listFlashcards = (projectId) =>
-  request('GET', `/projects/${projectId}/flashcards`);
-
-export const reviewFlashcard = (cardId, quality) =>
-  request('POST', `/flashcards/${cardId}/review`, { quality });
-
-export const updateFlashcard = (cardId, front, back) =>
-  request('PATCH', `/flashcards/${cardId}`, { front, back });
-
-export const deleteFlashcard = (cardId) =>
-  request('DELETE', `/flashcards/${cardId}`);
 
 // File upload (multipart) — kind is "document" or "transcript".
 export async function ingestFile(projectId, file, kind) {

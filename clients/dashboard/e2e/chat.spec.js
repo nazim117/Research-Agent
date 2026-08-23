@@ -38,25 +38,21 @@ test.describe('chat flow', () => {
     await expect(page.getByTestId('chat-message').last()).toContainText(FIXTURES.chatReply.reply);
   });
 
-  test('reply with citations shows sources panel', async ({ page }) => {
+  test('reply with citations shows sources in the right panel', async ({ page }) => {
     // Default mock returns one citation: source:DOC-1
     const input = page.getByTestId('chat-input');
     await input.fill('What did we decide?');
     await input.press('Enter');
 
-    // Citations panel should be present.
-    const citations = page.getByTestId('citations').last();
+    // Citations render in the Studio (right) panel, not under the message.
+    const citations = page.getByTestId('citations');
     await expect(citations).toBeVisible();
-    await expect(citations).toContainText('Sources (1)');
-
-    // Expand the panel.
-    await citations.click();
     const item = page.getByTestId('citation-item').last();
     await expect(item).toContainText('[1] source:DOC-1');
     await expect(item).toContainText('chunk 0');
   });
 
-  test('reply with no citations shows no sources panel', async ({ page }) => {
+  test('reply with no citations shows the empty sources state', async ({ page }) => {
     await mockApi(page, { chat: FIXTURES.chatReplyNoCitations });
     await page.goto('/');
     const select = page.getByTestId('project-select');
@@ -69,7 +65,7 @@ test.describe('chat flow', () => {
     await input.press('Enter');
 
     await expect(page.getByTestId('chat-message').last()).toBeVisible();
-    // No citations panel should exist on this message.
+    // No citations list should exist — the panel shows its empty state instead.
     const citationsCount = await page.getByTestId('citations').count();
     expect(citationsCount).toBe(0);
   });
