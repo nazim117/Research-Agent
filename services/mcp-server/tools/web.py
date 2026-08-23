@@ -18,10 +18,17 @@ import re
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import httpx
+import trafilatura
 
 from instrumentation import tool
+from tools._net import assert_safe_url
 
-_MAX_FETCH_BYTES = 100 * 1024
+# Raw network read cap — generous, since HTML pages carry a lot of
+# boilerplate (nav/scripts/styles) before the actual content; the *output*
+# handed to the model is capped separately at _MAX_OUTPUT_BYTES, after HTML
+# extraction has already shrunk it.
+_MAX_RAW_FETCH_BYTES = 500 * 1024
+_MAX_OUTPUT_BYTES = 100 * 1024
 _MAX_DDG_BYTES = 512 * 1024
 
 _client = httpx.AsyncClient(timeout=15.0)
@@ -38,6 +45,42 @@ _RE_HTML_TAGS = re.compile(r"<[^>]*>")
 def _clean_text(s: str) -> str:
     s = _RE_HTML_TAGS.sub(" ", s)
     return " ".join(s.split())
+
+
+def _looks_like_html(content_type: str, body: str) -> bool:
+    if "html" in content_type.lower():
+        return True
+    # Some servers omit/mislabel Content-Type; sniff the body itself so
+    # e.g. a mislabeled HTML page still gets extracted rather than dumped
+    # to the model as raw markup.
+    stripped = body.lstrip()[:200].lower()
+    return stripped.startswith(("<!doctype html", "<html"))
+
+
+# Below this, treat extraction as having found nothing useful. trafilatura
+# doesn't always return "" for a JavaScript-rendered shell page — it can
+# still pull out a stray "Loading..." or nav fragment — so an empty-string
+# check alone isn't enough to catch the case this is meant to catch.
+_MIN_EXTRACTED_CHARS = 80
+
+
+def _extract_readable_text(html_content: str) -> str:
+    """Reduce an HTML page to its main readable text (article body — nav,
+    ads, scripts, and other boilerplate stripped), the same approach
+    chat-agent's extractors.py uses for document ingestion. Returns "" if
+    trafilatura can't find a main content section, or finds only a scrap
+    below _MIN_EXTRACTED_CHARS (e.g. a JavaScript-rendered page whose
+    initial HTML is just a loading shell) — callers should treat that as
+    "nothing useful here," not silently fall back to the raw markup, which
+    just wastes the caller's context budget."""
+    try:
+        extracted = (trafilatura.extract(html_content) or "").strip()
+    except Exception:
+        # trafilatura/lxml can raise on genuinely malformed markup; this is
+        # best-effort extraction from arbitrary, untrusted web content, so
+        # degrade to "nothing extracted" rather than fail the whole fetch.
+        return ""
+    return extracted if len(extracted) >= _MIN_EXTRACTED_CHARS else ""
 
 
 def _decode_ddg_url(href: str) -> str:
@@ -165,12 +208,16 @@ def register(mcp) -> None:
 
     @tool(mcp)
     async def web_fetch(url: str) -> dict:
-        """Fetch the content of a URL and return it as text. Use to read a
-        specific page or API endpoint found via web_search. Responses are
-        capped at 100 KB."""
+        """Fetch the content of a URL and return it as text. HTML pages are
+        automatically reduced to their main readable text — scripts, nav,
+        ads, and other boilerplate stripped — so most pages come back as
+        clean article text rather than raw markup. Use to read a specific
+        page or API endpoint found via web_search. Responses are capped at
+        100 KB."""
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
             raise ValueError(f"invalid URL {url!r}")
+        assert_safe_url(url)
 
         headers = {"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)"}
         try:
@@ -178,19 +225,34 @@ def register(mcp) -> None:
                 chunks: list[bytes] = []
                 total = 0
                 async for chunk in resp.aiter_bytes():
-                    remaining = _MAX_FETCH_BYTES - total
+                    remaining = _MAX_RAW_FETCH_BYTES - total
                     if remaining <= 0:
                         break
                     chunks.append(chunk[:remaining])
                     total += min(len(chunk), remaining)
                 body = b"".join(chunks).decode(errors="replace")
                 status = resp.status_code
+                content_type = resp.headers.get("content-type", "")
         except httpx.HTTPError as exc:
             raise ValueError(f"fetch failed: {exc}") from exc
+
+        if _looks_like_html(content_type, body):
+            extracted = _extract_readable_text(body)
+            body = extracted or (
+                "(No readable article text could be extracted from this page — "
+                "it may be JavaScript-rendered or have no main content section. "
+                "Try a different URL, such as a raw markdown/API/JSON endpoint "
+                "for this content if one exists.)"
+            )
+
+        body_bytes = body.encode()
+        truncated = len(body_bytes) > _MAX_OUTPUT_BYTES
+        if truncated:
+            body = body_bytes[:_MAX_OUTPUT_BYTES].decode(errors="replace")
 
         return {
             "url": url,
             "status": status,
             "body": body,
-            "truncated": len(body.encode()) == _MAX_FETCH_BYTES,
+            "truncated": truncated,
         }

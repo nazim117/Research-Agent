@@ -31,6 +31,33 @@ async def call_tool_json(mcp: FastMCP, name: str, arguments: dict) -> dict:
 
 
 @pytest.fixture(autouse=True)
+def _mock_dns_resolution(monkeypatch):
+    """tools/_net.py's SSRF guard resolves hostnames via a real DNS lookup
+    (socket.getaddrinfo) before web_fetch/http_request make a request. Tests
+    use hostnames like api.example.com that would otherwise need a live
+    network call — pin resolution to a fixed public IP by default so the
+    whole suite stays network-free. Literal IPs (e.g. SSRF tests using
+    "127.0.0.1" directly) pass through unchanged, matching real getaddrinfo
+    behavior (a literal IP resolves to itself, no lookup needed) — otherwise
+    SSRF tests asserting a literal unsafe IP is blocked would be defeated by
+    this fixture rewriting it to a public one. Other SSRF-specific tests
+    override this per-test to prove a *hostname* resolving to a private IP
+    is also blocked."""
+    import ipaddress
+
+    import tools._net as net_module
+
+    def _fake_resolve(hostname: str) -> set[str]:
+        try:
+            ipaddress.ip_address(hostname)
+        except ValueError:
+            return {"93.184.216.34"}
+        return {hostname}
+
+    monkeypatch.setattr(net_module, "_resolve", _fake_resolve)
+
+
+@pytest.fixture(autouse=True)
 def _reset_memory_store():
     """tools/memory.py holds a module-level dict shared across the process,
     matching the Go service's in-process singleton. Reset it between tests

@@ -23,6 +23,18 @@ def main() -> None:
         load_dotenv(env_file)
         log.info("loaded env from %s", env_file)
 
+    # MCP_ENV_FILE (set in docker-compose.yml to a path in a named volume)
+    # is where PUT /config/env persists dashboard-saved values — see
+    # env_vars.find_env_file(). Load it *after* the block above, with
+    # override=True, so a value the user previously saved wins over
+    # whatever docker-compose's environment:/env_file: blocks set this
+    # boot; otherwise a saved value would persist to disk but never
+    # actually take effect after a restart.
+    mcp_env_file = os.environ.get("MCP_ENV_FILE")
+    if mcp_env_file and os.path.exists(mcp_env_file):
+        load_dotenv(mcp_env_file, override=True)
+        log.info("loaded persisted env overrides from %s", mcp_env_file)
+
     from server import build_mcp
 
     mcp = build_mcp()

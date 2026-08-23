@@ -88,6 +88,15 @@ class Settings(BaseSettings):
     # Same idea for conversation memory hits.
     memory_score_threshold: float = 0.5
 
+    # Max tool-call rounds in the agentic web-search loop (openai_compatible
+    # provider only — see llm.chat_with_tools). Bounds cost/latency; once hit,
+    # the loop forces one final answer-only call instead of looping forever.
+    # 6, not 4: real pages are often dead ends (JS-rendered shells, 404s,
+    # redirects) before landing on something readable, and a round spent
+    # recovering from a truncated response (main.py's _run_web_agent_loop)
+    # also counts against this budget — 4 was too tight in practice.
+    chat_tool_max_rounds: int = 6
+
     # MCP server — internal tool gateway.
     # The mcp-server (services/mcp-server, port 8083) proxies web search and
     # other outbound tool calls; the chat-agent never talks to those vendor

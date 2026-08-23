@@ -4,7 +4,11 @@ services:
       context: ./services/mcp-server
       dockerfile: Dockerfile
     ports:
-      - "8083:8083"
+      # Bound to loopback only: /config/env can write vendor secrets and is
+      # gated by an Origin allowlist, not real auth (see
+      # admin/config_env.py) — a wildcard-published port would let anything
+      # with LAN access to the host reach it, not just the dashboard.
+      - "127.0.0.1:8083:8083"
     # Load vendor credentials (e.g. BRAVE_SEARCH_API_KEY) from the repo-root
     # .env so the chat-agent never reads them directly.
     # required: false — a fresh clone has no .env yet (only .env.example),
@@ -19,6 +23,15 @@ services:
       # Bundled, no-API-key web search backend — takes precedence over Brave
       # when set (see services/mcp-server/tools/web.py's dispatch order).
       - SEARXNG_BASE_URL=http://searxng:8080
+      # env_file: above only injects the repo-root .env's values into this
+      # process's environment at startup — it never gives the container a
+      # writable copy of that file. PUT /config/env (dashboard's Settings >
+      # Advanced) needs somewhere it can actually persist to, so it writes
+      # here instead, in the mounted volume below, and main.py loads it back
+      # on every startup so saved values survive container recreation.
+      - MCP_ENV_FILE=/data/.env
+    volumes:
+      - mcp-env-data:/data
     depends_on:
       - searxng
     restart: unless-stopped
@@ -125,6 +138,9 @@ volumes:
   qdrant-data:
   # Persists the downloaded embedding model so it isn't re-fetched every start.
   tei-data:
+  # Persists dashboard-saved env vars (e.g. BRAVE_SEARCH_API_KEY) written via
+  # PUT /config/env — see mcp-server's MCP_ENV_FILE above.
+  mcp-env-data:
 
 networks:
   default:

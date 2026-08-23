@@ -18,7 +18,7 @@ import json
 
 import httpx
 import pytest
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
 
 from mcp_client import MCPClient, MCPError
 
@@ -30,9 +30,17 @@ class _FakeSession:
     """Stands in for a real mcp.ClientSession — call() only ever calls
     initialize() then call_tool()."""
 
-    def __init__(self, result: CallToolResult | None = None, call_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        result: CallToolResult | None = None,
+        call_error: Exception | None = None,
+        list_tools_result: ListToolsResult | None = None,
+        list_tools_error: Exception | None = None,
+    ) -> None:
         self._result = result
         self._call_error = call_error
+        self._list_tools_result = list_tools_result
+        self._list_tools_error = list_tools_error
 
     async def initialize(self):
         return None
@@ -42,6 +50,12 @@ class _FakeSession:
             raise self._call_error
         assert self._result is not None
         return self._result
+
+    async def list_tools(self) -> ListToolsResult:
+        if self._list_tools_error is not None:
+            raise self._list_tools_error
+        assert self._list_tools_result is not None
+        return self._list_tools_result
 
 
 def _session_cm(session: _FakeSession | None = None, open_error: Exception | None = None):
@@ -181,6 +195,56 @@ async def test_set_env_var_puts_key_and_value():
     resp = httpx.Response(200, json={"ok": True})
     client = MCPClient(transport=_StaticTransport(resp))
     await client.set_env_var("SEARXNG_BASE_URL", "http://x:8080")  # no exception = success
+
+
+# ---------------------------------------------------------------------------
+# get_tool_schemas() — used by the agentic web tool-calling loop in main.py
+# to build the OpenAI `tools` payload from mcp-server's real tool schemas.
+# ---------------------------------------------------------------------------
+
+_ALL_TOOLS = ListToolsResult(
+    tools=[
+        Tool(
+            name="web_search",
+            description="Search the web.",
+            inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
+        ),
+        Tool(
+            name="web_fetch",
+            description="Fetch a URL.",
+            inputSchema={"type": "object", "properties": {"url": {"type": "string"}}},
+        ),
+        Tool(name="memory_set", description="Store a memory.", inputSchema={"type": "object"}),
+    ]
+)
+
+
+async def test_get_tool_schemas_converts_to_openai_format():
+    client = MCPClient(session_cm=_session_cm(_FakeSession(list_tools_result=_ALL_TOOLS)))
+    schemas = await client.get_tool_schemas()
+    assert len(schemas) == 3
+    web_search = next(s for s in schemas if s["function"]["name"] == "web_search")
+    assert web_search == {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web.",
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+        },
+    }
+
+
+async def test_get_tool_schemas_filters_by_names():
+    client = MCPClient(session_cm=_session_cm(_FakeSession(list_tools_result=_ALL_TOOLS)))
+    schemas = await client.get_tool_schemas(names=["web_search", "web_fetch"])
+    assert {s["function"]["name"] for s in schemas} == {"web_search", "web_fetch"}
+
+
+async def test_get_tool_schemas_session_failure_raises_mcp_error():
+    client = MCPClient(session_cm=_session_cm(open_error=ConnectionRefusedError("refused")))
+    with pytest.raises(MCPError) as exc_info:
+        await client.get_tool_schemas()
+    assert "unreachable" in str(exc_info.value).lower()
 
 
 pytestmark = pytest.mark.asyncio

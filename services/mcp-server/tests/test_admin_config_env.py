@@ -5,6 +5,11 @@ import env_vars
 from app import build_app
 from server import build_mcp
 
+# Captured before any test monkeypatches env_vars.find_env_file, so tests
+# that need the *real* implementation (e.g. to exercise MCP_ENV_FILE through
+# the actual HTTP route, not the _env_file fixture's stand-in) can restore it.
+_REAL_FIND_ENV_FILE = env_vars.find_env_file
+
 
 @pytest.fixture
 async def client():
@@ -69,6 +74,25 @@ async def test_put_secret_never_echoed_back_in_full(client):
     assert "sk-verysecretvalue" not in resp.text
     row = next(r for r in resp.json() if r["key"] == "BRAVE_SEARCH_API_KEY")
     assert row["hint"] == "…alue"
+
+
+async def test_put_persists_via_mcp_env_file_end_to_end(client, tmp_path, monkeypatch):
+    """Exercises the real find_env_file() path (not the _env_file fixture's
+    monkeypatch) via MCP_ENV_FILE, the way docker-compose.yml wires it —
+    this is the scenario that used to 400 with "no .env file found" before
+    MCP_ENV_FILE existed, since find_dotenv() finds nothing inside a
+    container."""
+    monkeypatch.setattr(env_vars, "find_env_file", _REAL_FIND_ENV_FILE)
+    target = tmp_path / "data" / ".env"
+    monkeypatch.setenv("MCP_ENV_FILE", str(target))
+
+    resp = await client.put("/config/env", json={"key": "SEARXNG_BASE_URL", "value": "http://x:8080"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    from dotenv import dotenv_values
+
+    assert dotenv_values(str(target))["SEARXNG_BASE_URL"] == "http://x:8080"
 
 
 async def test_put_with_disallowed_origin_is_rejected(client):

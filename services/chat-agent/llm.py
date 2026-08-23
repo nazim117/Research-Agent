@@ -10,10 +10,83 @@
 # which model sees their data — that decision belongs to the admin who deploys
 # the service.
 
+import json
+import re
+from dataclasses import dataclass, field
+
 import httpx
 from fastapi import HTTPException
 
 from config import settings
+
+
+# ─── Tool-calling types (openai_compatible provider only) ─────────────────────
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict
+
+
+@dataclass
+class LLMToolResult:
+    content: str | None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: dict = field(default_factory=dict)
+    finish_reason: str | None = None
+
+
+# ─── DeepSeek leaked tool-call markup recovery ─────────────────────────────────
+#
+# deepseek-chat has a reproducible quirk: instead of populating the API's
+# structured `tool_calls` field, it sometimes emits its own internal
+# "DSML" tool-call markup literally inside `content` — confirmed against the
+# live API with both tool_choice omitted and tool_choice="none", so this
+# isn't something request parameters fix; it's an upstream serialization gap
+# for this model. Detected and parsed here so callers (the agentic loop in
+# main.py) always see tool_calls populated correctly regardless of which way
+# the model expressed them, and the raw markup never reaches the user.
+_LEAKED_TOOL_CALLS_RE = re.compile(r"<｜｜DSML｜｜tool_calls>(.*?)</｜｜DSML｜｜tool_calls>", re.DOTALL)
+_LEAKED_INVOKE_RE = re.compile(r'<｜｜DSML｜｜invoke name="([^"]+)">(.*?)</｜｜DSML｜｜invoke>', re.DOTALL)
+_LEAKED_PARAM_RE = re.compile(
+    r'<｜｜DSML｜｜parameter name="([^"]+)"(?:\s+string="(true|false)")?[^>]*>(.*?)</｜｜DSML｜｜parameter>',
+    re.DOTALL,
+)
+
+
+def _coerce_leaked_param(raw_value: str, is_string: str | None) -> object:
+    value = raw_value.strip()
+    if is_string == "false":
+        # DSML marks non-string params explicitly (numbers, booleans, ...);
+        # recover the real type instead of leaving everything as str, which
+        # would fail schema validation for e.g. web_search's integer limit.
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _parse_leaked_tool_calls(content: str) -> tuple[str, list[ToolCall]]:
+    """Recover tool calls DeepSeek emitted as literal DSML markup instead of
+    the API's structured tool_calls field.
+
+    Returns (cleaned_content, tool_calls) — cleaned_content has the markup
+    stripped out (any genuine prose the model wrote alongside it, e.g. "let
+    me try a different approach", is preserved); tool_calls is [] if no
+    markup was found.
+    """
+    calls: list[ToolCall] = []
+    for i, block in enumerate(_LEAKED_TOOL_CALLS_RE.findall(content)):
+        for j, (name, body) in enumerate(_LEAKED_INVOKE_RE.findall(block)):
+            arguments = {
+                pname: _coerce_leaked_param(pvalue, is_str)
+                for pname, is_str, pvalue in _LEAKED_PARAM_RE.findall(body)
+            }
+            calls.append(ToolCall(id=f"leaked-{i}-{j}", name=name, arguments=arguments))
+    cleaned = _LEAKED_TOOL_CALLS_RE.sub("", content).strip()
+    return cleaned, calls
 
 
 # ─── Backend implementations ──────────────────────────────────────────────────
@@ -53,17 +126,13 @@ async def _chat_ollama(messages: list[dict]) -> tuple[str, dict]:
     return reply, usage
 
 
-async def _chat_openai_compatible(messages: list[dict]) -> tuple[str, dict]:
-    """Call any OpenAI-compatible /chat/completions endpoint.
+async def _post_openai_chat(payload: dict) -> dict:
+    """POST a /chat/completions payload to the configured openai_compatible
+    backend and return the raw parsed JSON body.
 
-    Returns (reply_text, usage_dict) where usage_dict has prompt_tokens,
-    completion_tokens, and total_tokens (direct from the API response).
+    Shared by _chat_openai_compatible() and chat_with_tools() so both paths
+    get the same connection/error handling.
     """
-    payload = {
-        "model": settings.openai_model,
-        "messages": messages,
-        "max_tokens": 1024,
-    }
     headers = {
         "Authorization": f"Bearer {settings.openai_api_key}",
         "Content-Type": "application/json",
@@ -80,20 +149,118 @@ async def _chat_openai_compatible(messages: list[dict]) -> tuple[str, dict]:
         raise HTTPException(502, f"Cannot reach {label}: {exc}") from exc
     if r.status_code != 200:
         raise HTTPException(502, f"{label} returned {r.status_code}: {r.text}")
+    return r.json()
 
-    body = r.json()
-    reply = body["choices"][0]["message"]["content"]
 
+def _normalize_usage(raw_usage: dict) -> dict:
     # The usage field is always present in conformant OpenAI-compatible APIs.
     # We default to 0 for any missing subfield rather than crashing so that
     # non-standard providers that omit usage don't break the request.
-    raw_usage = body.get("usage") or {}
-    usage = {
+    return {
         "prompt_tokens": raw_usage.get("prompt_tokens", 0),
         "completion_tokens": raw_usage.get("completion_tokens", 0),
         "total_tokens": raw_usage.get("total_tokens", 0),
     }
+
+
+async def _chat_openai_compatible(messages: list[dict]) -> tuple[str, dict]:
+    """Call any OpenAI-compatible /chat/completions endpoint.
+
+    Returns (reply_text, usage_dict) where usage_dict has prompt_tokens,
+    completion_tokens, and total_tokens (direct from the API response).
+    """
+    payload = {
+        "model": settings.openai_model,
+        "messages": messages,
+        "max_tokens": 1024,
+    }
+    body = await _post_openai_chat(payload)
+    reply = body["choices"][0]["message"]["content"]
+    usage = _normalize_usage(body.get("usage") or {})
     return reply, usage
+
+
+async def chat_with_tools(
+    messages: list[dict], tools: list[dict], tool_choice: str = "auto"
+) -> LLMToolResult:
+    """Like chat(), but lets the model call tools (openai_compatible only).
+
+    Used by the agentic web-search loop in main.py. Ollama isn't supported
+    here — local model function-calling support is inconsistent, so that
+    path stays on the plain fixed-pipeline chat().
+
+    Args:
+        messages:    Full conversation history, same shape as chat().
+        tools:       OpenAI-style tool schemas, e.g. from
+                     mcp_client.get_tool_schemas().
+        tool_choice: "auto" (default) lets the model decide; "none" tells it
+                     to answer directly without calling anything — used to
+                     force a final answer once the caller's round budget is
+                     spent. Doesn't fully stop deepseek-chat from *wanting*
+                     to call another tool (see the DSML recovery above), but
+                     is still the spec-correct signal and helps well-behaved
+                     providers.
+
+    Returns:
+        LLMToolResult with `content` (may be None if the model only returned
+        tool calls), `tool_calls` (empty when the model is done calling
+        tools and is answering directly), and `finish_reason` — check this
+        for "length" before treating an empty-tool_calls response as a real
+        final answer; it may just be truncated mid-thought.
+
+    Raises:
+        HTTPException(500): LLM_PROVIDER is not "openai_compatible".
+        HTTPException(502): Backend unreachable or returned an error.
+    """
+    if settings.llm_provider != "openai_compatible":
+        raise HTTPException(
+            500,
+            "chat_with_tools requires LLM_PROVIDER=openai_compatible "
+            f"(got {settings.llm_provider!r})",
+        )
+
+    payload = {
+        "model": settings.openai_model,
+        "messages": messages,
+        # Higher than plain chat()'s 1024: each round's payload carries the
+        # growing tool-call/tool-result history, and a model that narrates
+        # ("let me try X instead...") before calling the next tool can burn
+        # a surprising number of tokens on prose alone. Confirmed live
+        # against DeepSeek: at 1024 this occasionally truncates mid-thought
+        # (finish_reason="length") *right* before the model would have
+        # emitted the next tool call, which looks indistinguishable from
+        # "the model is done" if the caller doesn't check finish_reason —
+        # see _run_web_agent_loop in main.py, which does.
+        "max_tokens": 4096,
+        "tools": tools,
+        "tool_choice": tool_choice,
+    }
+    body = await _post_openai_chat(payload)
+    choice = body["choices"][0]
+    message = choice["message"]
+    raw_tool_calls = message.get("tool_calls") or []
+    tool_calls = [
+        ToolCall(
+            id=tc["id"],
+            name=tc["function"]["name"],
+            arguments=json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {},
+        )
+        for tc in raw_tool_calls
+    ]
+
+    content = message.get("content")
+    if not tool_calls and content and "DSML" in content:
+        content, leaked_calls = _parse_leaked_tool_calls(content)
+        if leaked_calls:
+            tool_calls = leaked_calls
+
+    usage = _normalize_usage(body.get("usage") or {})
+    return LLMToolResult(
+        content=content or None,
+        tool_calls=tool_calls,
+        usage=usage,
+        finish_reason=choice.get("finish_reason"),
+    )
 
 
 # ─── Dispatcher ───────────────────────────────────────────────────────────────

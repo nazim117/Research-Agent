@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import dotenv_values, find_dotenv, set_key
 
@@ -34,7 +35,26 @@ def _mask_hint(value: str, secret: bool) -> str:
 
 
 def find_env_file() -> str:
-    """Walk up from cwd looking for a .env file, mirroring Go's findEnvFile."""
+    """Return the path this service reads/writes allowlisted env vars from.
+
+    MCP_ENV_FILE takes precedence when set — this is the dedicated writable
+    location docker-compose.yml points at a named volume, since env_file: in
+    Compose only injects values into the container's process environment at
+    startup, it never gives the container access to the host's .env file to
+    write back to (find_dotenv() would find nothing inside the container).
+    The file (and its parent dir) is created if missing, since this path is
+    meant to always be writable.
+
+    Falls back to walking up from cwd for a .env file (mirroring Go's
+    findEnvFile) when MCP_ENV_FILE is unset — unchanged behavior for native,
+    non-Docker use, where the repo-root .env is directly on disk.
+    """
+    configured = os.environ.get("MCP_ENV_FILE")
+    if configured:
+        path = Path(configured)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+        return str(path)
     return find_dotenv(usecwd=True)
 
 

@@ -8,6 +8,7 @@ import json
 import httpx
 
 from instrumentation import tool
+from tools._net import assert_safe_url
 
 _MAX_BYTES = 100 * 1024
 
@@ -43,6 +44,7 @@ def register(mcp) -> None:
         JSON if possible. Use this to call REST APIs, webhooks, or any HTTP
         service during the execute step."""
         method = method.upper()
+        assert_safe_url(url)
 
         content: bytes | None = None
         if body is not None:

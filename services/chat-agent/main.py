@@ -20,6 +20,7 @@
 #   rag.py        — chunk + ingest documents; retrieve relevant chunks (per project)
 #   llm.py        — send a message list to the configured LLM backend, get a reply
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -39,7 +40,7 @@ from embeddings import embed, get_model_info as get_embeddings_model_info
 import env_config
 from health import check_detailed_health
 from mcp_client import MCPClient, MCPError
-from llm import chat, validate_llm_config
+from llm import ToolCall, chat, chat_with_tools, validate_llm_config
 from memory import ConversationStore
 from ollama_models import list_models, stream_pull
 from projects import SCHEMA_VERSION, Project, ProjectStore
@@ -71,6 +72,19 @@ _mcp = MCPClient(
     base_url=settings.mcp_base_url,
     timeout=settings.mcp_timeout_s,
 )
+
+# Tools offered to the agentic web-search loop (openai_compatible provider
+# only — see _run_web_agent_loop below). Schemas are static per deployment,
+# so we fetch them from mcp-server once and cache them.
+_WEB_TOOL_NAMES = ["web_search", "web_fetch"]
+_web_tool_schemas_cache: list[dict] | None = None
+
+
+async def _get_web_tool_schemas() -> list[dict]:
+    global _web_tool_schemas_cache
+    if _web_tool_schemas_cache is None:
+        _web_tool_schemas_cache = await _mcp.get_tool_schemas(names=_WEB_TOOL_NAMES)
+    return _web_tool_schemas_cache
 
 # nomic-embed-text always produces 768-dimensional vectors.
 # This must match the dimension used when the Qdrant collections were created.
@@ -978,6 +992,140 @@ async def delete_source(project_id: str, source: str):
     return {"deleted": True}
 
 
+# ─── Agentic web-search loop (openai_compatible provider only) ───────────────
+#
+# When req.web_search is true and the provider supports tool-calling, the
+# model is offered web_search/web_fetch as real tools instead of getting one
+# pre-fetched batch of results — it can search, read, and decide to search or
+# fetch again before answering. Bounded by settings.chat_tool_max_rounds.
+
+def _to_openai_tool_call(tc: ToolCall) -> dict:
+    """Re-serialize a parsed ToolCall back into the OpenAI tool_calls shape
+    (arguments as a JSON string) for echoing the assistant's own call back
+    into message history."""
+    return {
+        "id": tc.id,
+        "type": "function",
+        "function": {"name": tc.name, "arguments": json.dumps(tc.arguments)},
+    }
+
+
+async def _execute_web_tool(tc: ToolCall, citation_map: dict[str, int], citation_offset: int) -> str:
+    """Run one model-requested web_search/web_fetch call and return the text
+    to feed back to the model as the tool result. Assigns/reuses a citation
+    ref per URL in citation_map (mutated in place) so citations stay stable
+    across multiple rounds that touch the same URL."""
+    try:
+        result = await _mcp.call(tc.name, tc.arguments)
+    except MCPError as exc:
+        # Let the model see the failure and react, instead of failing the turn.
+        return f"Tool call failed: {exc}"
+
+    def _ref_for(url: str) -> int:
+        if url not in citation_map:
+            citation_map[url] = citation_offset + len(citation_map) + 1
+        return citation_map[url]
+
+    if tc.name == "web_search":
+        results = result.get("results", [])
+        if not results:
+            return "No results."
+        return "\n\n".join(
+            f"[{_ref_for(r['url'])}] {r['title']} — {r['url']}\n{r['snippet']}" for r in results
+        )
+
+    if tc.name == "web_fetch":
+        url = tc.arguments.get("url", "")
+        ref = _ref_for(url)
+        body = result.get("body", "")[:4000]
+        return f"[{ref}] fetched {url} (status {result.get('status')}):\n{body}"
+
+    return json.dumps(result)
+
+
+def _citations_from_map(citation_map: dict[str, int]) -> list[Citation]:
+    return [
+        Citation(ref=ref, source=url, chunk_index=0)
+        for url, ref in sorted(citation_map.items(), key=lambda kv: kv[1])
+    ]
+
+
+async def _run_web_agent_loop(
+    messages: list[dict], tools: list[dict], citation_offset: int
+) -> tuple[str, list[Citation]]:
+    """Let the model call web_search/web_fetch up to chat_tool_max_rounds
+    times, then return its final answer plus any citations gathered along
+    the way. `messages` is mutated in place with the tool-call/tool-result
+    turns so callers can log/inspect the full transcript afterward.
+
+    A round that comes back with no tool_calls and finish_reason="length"
+    is a truncated-mid-thought response, not a real final answer — it's
+    retried (with a brevity nudge) rather than returned to the user, still
+    counting against chat_tool_max_rounds."""
+    citation_map: dict[str, int] = {}
+
+    for _ in range(settings.chat_tool_max_rounds):
+        result = await chat_with_tools(messages, tools)
+        if not result.tool_calls:
+            if result.finish_reason == "length":
+                # Cut off mid-thought (hit max_tokens), not actually done —
+                # confirmed live: this shows up as narration like "let me
+                # try X instead" with no tool_calls, indistinguishable from
+                # a genuine final answer unless finish_reason is checked.
+                # Don't keep the truncated assistant turn (it's incomplete,
+                # not useful history) — just nudge for brevity and retry
+                # this round.
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Your previous response was cut off before you finished. "
+                            "Be concise: briefly state your next step, then immediately "
+                            "call the tool — or if you already have enough information, "
+                            "give your final answer directly."
+                        ),
+                    }
+                )
+                continue
+            return result.content or "", _citations_from_map(citation_map)
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": result.content,
+                "tool_calls": [_to_openai_tool_call(tc) for tc in result.tool_calls],
+            }
+        )
+        for tc in result.tool_calls:
+            tool_content = await _execute_web_tool(tc, citation_map, citation_offset)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_content})
+
+    # Round cap hit: force a final answer. Still chat_with_tools (not plain
+    # chat()) — messages contains prior tool-calling turns, and dropping
+    # `tools` entirely here is what triggers deepseek-chat's DSML markup
+    # leak (reproduced live: happens with tool_choice="none" too).
+    #
+    # Confirmed live: deepseek-chat routinely ignores tool_choice="none" and
+    # still tries to call a tool (via DSML markup, recovered into
+    # final.tool_calls by chat_with_tools). When that happens, final.content
+    # is NOT a real answer — it's just the narration lead-in the model wrote
+    # right before the tool call it wanted to make (e.g. "let me fetch the
+    # raw markdown version"), never the actual answer. The round budget is
+    # spent, so that tool call is never executed — but its presence means
+    # we must not trust final.content either; only an empty tool_calls list
+    # means the model actually committed to a real answer this time.
+    final = await chat_with_tools(messages, tools, tool_choice="none")
+    if final.tool_calls or not final.content:
+        reply = (
+            "I gathered some information but couldn't finish putting together a "
+            "complete answer in time — try asking again, possibly with a "
+            "narrower question."
+        )
+    else:
+        reply = final.content
+    return reply, _citations_from_map(citation_map)
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def post_chat(req: ChatRequest) -> ChatResponse:
     """Accept a user message, retrieve scoped memory + documents, call DeepSeek.
@@ -1076,21 +1224,35 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
             seen_texts.add(c.text)
             relevant_chunks.append(c)
 
-    # 3d. If the user explicitly turned on web search for this message, search
-    # now (before the single LLM call below) and fold results into the same
-    # citation numbering as doc chunks. This is user-triggered, not model-
-    # triggered — the LLM never decides to search on its own — so no second
-    # LLM round-trip is needed; the results are just another context block.
+    # 3d. If the user explicitly turned on web search for this message, give
+    # the model access to it. This is always user-triggered, never model-
+    # triggered — req.web_search gates whether search is available at all.
+    #
+    # openai_compatible: the model gets web_search/web_fetch as real tools
+    # and can call them (and re-call, e.g. search then fetch) in a bounded
+    # loop — see _run_web_agent_loop below.
+    # ollama: function-calling support varies too much across local models,
+    # so it keeps the original behavior — one fixed web_search call, folded
+    # into the prompt as a static context block before the single LLM call.
     web_results: list[dict] = []
     web_search_error: str | None = None
+    web_tools: list[dict] = []
+    use_agentic_web = False
     if req.web_search:
-        try:
-            web_response = await _mcp.call("web_search", {"query": req.message, "limit": 5})
-            web_results = web_response.get("results", [])
-        except MCPError as exc:
-            # Degrade, don't fail the whole turn — the LLM can still answer
-            # from RAG/memory/its own knowledge, just without live results.
-            web_search_error = str(exc)
+        if settings.llm_provider == "openai_compatible":
+            try:
+                web_tools = await _get_web_tool_schemas()
+                use_agentic_web = True
+            except MCPError as exc:
+                web_search_error = str(exc)
+        else:
+            try:
+                web_response = await _mcp.call("web_search", {"query": req.message, "limit": 5})
+                web_results = web_response.get("results", [])
+            except MCPError as exc:
+                # Degrade, don't fail the whole turn — the LLM can still answer
+                # from RAG/memory/its own knowledge, just without live results.
+                web_search_error = str(exc)
 
     # Build citations list for the API response. ref is 1-based and matches
     # the [N] numbers injected into the prompt below. Web results continue
@@ -1171,6 +1333,23 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
                 ),
             }
         )
+    elif use_agentic_web:
+        # No pre-fetched results here — the model calls web_search/web_fetch
+        # itself (see _run_web_agent_loop). It still needs to know search is
+        # on for this turn, since the user explicitly asked for it.
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "The user turned on web search for this message. You have "
+                    "web_search and web_fetch tools available — use them if the "
+                    "question needs current or external information (e.g. search, "
+                    "then fetch a promising result to read it in full). Cite "
+                    "results by reference number, e.g. [N], the same way you'd "
+                    "cite project knowledge."
+                ),
+            }
+        )
 
     # Then inject relevant past conversation messages.
     if unique_hits:
@@ -1201,8 +1380,16 @@ async def post_chat(req: ChatRequest) -> ChatResponse:
     )
     logger.debug("LLM full messages: %s", messages)
 
-    # 6. Call the LLM (backend and model fixed by deploy-time config).
-    reply = await chat(messages)
+    # 6. Call the LLM (backend and model fixed by deploy-time config). When
+    # web search is on and the provider supports tool-calling, let the model
+    # drive its own search/fetch rounds instead of a single fixed call.
+    if use_agentic_web:
+        reply, extra_citations = await _run_web_agent_loop(
+            messages, web_tools, citation_offset=len(relevant_chunks)
+        )
+        citations += extra_citations
+    else:
+        reply = await chat(messages)
 
     # 7. Persist the assistant reply to SQLite.
     await store.append(req.project_id, req.session_id, "assistant", reply)

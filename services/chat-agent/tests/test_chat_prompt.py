@@ -387,6 +387,11 @@ async def test_web_search_off_by_default_never_calls_mcp():
 async def test_web_search_on_injects_results_and_citations():
     """web_search=true calls mcp.call("web_search", ...) and folds results into
     both the prompt and the citations array, numbered after doc chunks.
+
+    This exercises the ollama/fixed-pipeline path specifically (pinned via
+    settings.llm_provider) — the openai_compatible provider instead runs the
+    agentic web tool-calling loop, covered separately in
+    test_web_agent_loop.py.
     """
     captured_messages = []
 
@@ -405,6 +410,7 @@ async def test_web_search_on_injects_results_and_citations():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main._mcp") as mcp,
+        patch("main.settings.llm_provider", "ollama"),
     ):
         mcp.call = AsyncMock(return_value=FAKE_WEB_RESULTS)
         from main import app
@@ -437,6 +443,9 @@ async def test_web_search_on_injects_results_and_citations():
 async def test_web_search_failure_degrades_gracefully():
     """If the search backend errors, the chat turn still succeeds — the LLM
     is told the search failed instead of the whole request 500ing.
+
+    Pinned to the ollama/fixed-pipeline path — see
+    test_web_search_on_injects_results_and_citations above.
     """
     from mcp_client import MCPError
 
@@ -457,6 +466,7 @@ async def test_web_search_failure_degrades_gracefully():
         patch("main._require_project", new_callable=AsyncMock),
         patch("main.document_state_store.get_disabled_sources", new_callable=AsyncMock, return_value=set()),
         patch("main._mcp") as mcp,
+        patch("main.settings.llm_provider", "ollama"),
     ):
         mcp.call = AsyncMock(side_effect=MCPError("search backend unreachable"))
         from main import app

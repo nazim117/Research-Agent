@@ -96,3 +96,37 @@ async def test_request_failure_raises_tool_error(mcp):
     respx.get("https://api.example.com/down").mock(side_effect=httpx.ConnectError("refused"))
     with pytest.raises(ToolError, match="request failed"):
         await mcp.call_tool("http_request", {"url": "https://api.example.com/down"})
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard (tools/_net.py) — http_request must never reach internal infra.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1/",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.5/",
+    "http://192.168.1.1/",
+])
+async def test_http_request_rejects_literal_unsafe_ips(mcp, url):
+    with respx.mock:
+        route = respx.get(url).mock(return_value=httpx.Response(200))
+        with pytest.raises(ToolError, match="non-public address"):
+            await mcp.call_tool("http_request", {"url": url})
+        assert not route.called
+
+
+async def test_http_request_rejects_hostname_resolving_to_private_ip(mcp, monkeypatch):
+    import tools._net as net_module
+
+    monkeypatch.setattr(net_module, "_resolve", lambda hostname: {"192.168.5.5"})
+    with respx.mock:
+        route = respx.get("https://internal.corp.example/").mock(return_value=httpx.Response(200))
+        with pytest.raises(ToolError, match="non-public address"):
+            await mcp.call_tool("http_request", {"url": "https://internal.corp.example/"})
+        assert not route.called
+
+
+async def test_http_request_rejects_non_http_scheme(mcp):
+    with pytest.raises(ToolError, match="unsupported scheme"):
+        await mcp.call_tool("http_request", {"url": "ftp://example.com/file"})

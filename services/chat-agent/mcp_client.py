@@ -129,6 +129,45 @@ class MCPClient:
         except json.JSONDecodeError as exc:
             raise MCPError(f"tool {name!r} returned non-JSON text: {raw_text[:200]}") from exc
 
+    async def get_tool_schemas(self, names: list[str] | None = None) -> list[dict]:
+        """Fetch mcp-server's tool schemas and convert them to the OpenAI
+        `tools` format for use with llm.chat_with_tools().
+
+        Args:
+            names: If given, only include tools with these names (the
+                   agentic web loop only wants web_search/web_fetch, not
+                   every tool mcp-server exposes).
+
+        Returns:
+            List of {"type": "function", "function": {"name", "description",
+            "parameters"}} dicts.
+
+        Raises:
+            MCPError: Connection/session failure.
+        """
+        try:
+            async with self._open_session() as session:
+                await session.initialize()
+                result = await session.list_tools()
+        except Exception as exc:
+            raise MCPError(f"mcp-server unreachable: {exc}") from exc
+
+        tools = result.tools
+        if names is not None:
+            tools = [t for t in tools if t.name in names]
+
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description or "",
+                    "parameters": t.inputSchema,
+                },
+            }
+            for t in tools
+        ]
+
     async def _get(self, path: str) -> dict:
         """Shared GET helper for mcp-server's plain admin HTTP endpoints
         (not the MCP protocol call() above uses)."""

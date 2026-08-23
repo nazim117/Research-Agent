@@ -134,3 +134,107 @@ async def test_web_fetch_truncates_at_100kb(mcp):
 async def test_web_fetch_rejects_invalid_url(mcp):
     with pytest.raises(ToolError, match="invalid URL"):
         await mcp.call_tool("web_fetch", {"url": "not-a-url"})
+
+
+# ---------------------------------------------------------------------------
+# HTML extraction — web_fetch reduces HTML pages to readable text instead of
+# handing back raw markup (nav/scripts/ads stripped), same technique as
+# chat-agent's extractors.py. Fixes the agentic loop repeatedly burning
+# rounds on JS-rendered pages whose raw HTML is just a loading shell.
+# ---------------------------------------------------------------------------
+
+HTML_ARTICLE = """<!DOCTYPE html>
+<html><head><title>Qdrant 1.19 Release</title></head>
+<body>
+<nav>Home | Docs | Blog</nav>
+<article>
+<h1>Qdrant 1.19.0 Release Notes</h1>
+<p>This release introduces TurboQuant compression, a new quantization method
+that reduces vector storage size by up to 50 percent while maintaining high
+recall across most workloads and datasets tested internally.</p>
+<p>We also improved query throughput by roughly 30 percent, and fixed a
+memory leak in the HNSW index builder that could occur during long-running
+indexing jobs on large collections.</p>
+</article>
+<footer>Copyright 2026</footer>
+</body></html>"""
+
+HTML_JS_SHELL = """<!DOCTYPE html>
+<html><head><title>Qdrant Blog</title></head>
+<body><div id="app">Loading...</div><script src="/app.js"></script></body></html>"""
+
+
+@respx.mock
+async def test_web_fetch_extracts_readable_text_from_html(mcp):
+    respx.get("https://example.com/blog").mock(
+        return_value=httpx.Response(200, text=HTML_ARTICLE, headers={"content-type": "text/html; charset=utf-8"})
+    )
+    out = await call_tool_json(mcp, "web_fetch", {"url": "https://example.com/blog"})
+    assert "TurboQuant compression" in out["body"]
+    assert "<nav>" not in out["body"]
+    assert "<html>" not in out["body"]
+
+
+@respx.mock
+async def test_web_fetch_html_with_no_extractable_content_returns_helpful_message(mcp):
+    respx.get("https://example.com/spa").mock(
+        return_value=httpx.Response(200, text=HTML_JS_SHELL, headers={"content-type": "text/html; charset=utf-8"})
+    )
+    out = await call_tool_json(mcp, "web_fetch", {"url": "https://example.com/spa"})
+    assert "Loading..." not in out["body"]
+    assert "No readable article text" in out["body"]
+
+
+@respx.mock
+async def test_web_fetch_leaves_non_html_content_untouched(mcp):
+    body_text = '{"tag_name": "v1.19.0", "body": "release body text"}'
+    respx.get("https://api.example.com/release").mock(
+        return_value=httpx.Response(200, text=body_text, headers={"content-type": "application/json"})
+    )
+    out = await call_tool_json(mcp, "web_fetch", {"url": "https://api.example.com/release"})
+    assert out["body"] == body_text
+
+
+@respx.mock
+async def test_web_fetch_sniffs_html_when_content_type_missing(mcp):
+    respx.get("https://example.com/mislabeled").mock(
+        return_value=httpx.Response(200, text=HTML_ARTICLE, headers={"content-type": "application/octet-stream"})
+    )
+    out = await call_tool_json(mcp, "web_fetch", {"url": "https://example.com/mislabeled"})
+    assert "TurboQuant compression" in out["body"]
+
+
+# ---------------------------------------------------------------------------
+# SSRF guard (tools/_net.py) — web_fetch must never reach internal infra.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1/",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.5/",
+    "http://192.168.1.1/",
+])
+async def test_web_fetch_rejects_literal_unsafe_ips(mcp, url):
+    with respx.mock:
+        route = respx.get(url).mock(return_value=httpx.Response(200, text="should never be seen"))
+        with pytest.raises(ToolError, match="non-public address"):
+            await mcp.call_tool("web_fetch", {"url": url})
+        assert not route.called
+
+
+async def test_web_fetch_rejects_hostname_resolving_to_private_ip(mcp, monkeypatch):
+    import tools._net as net_module
+
+    monkeypatch.setattr(net_module, "_resolve", lambda hostname: {"10.1.2.3"})
+    with respx.mock:
+        route = respx.get("https://internal.corp.example/").mock(return_value=httpx.Response(200))
+        with pytest.raises(ToolError, match="non-public address"):
+            await mcp.call_tool("web_fetch", {"url": "https://internal.corp.example/"})
+        assert not route.called
+
+
+async def test_web_fetch_rejects_non_http_scheme(mcp):
+    # netloc must be non-empty to get past web_fetch's own pre-check
+    # (`not parsed.scheme or not parsed.netloc`) and reach assert_safe_url.
+    with pytest.raises(ToolError, match="unsupported scheme"):
+        await mcp.call_tool("web_fetch", {"url": "ftp://example.com/file"})
